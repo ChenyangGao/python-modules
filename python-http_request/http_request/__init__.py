@@ -2,41 +2,58 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = [
-    "SupportsGeturl", "url_origin", "complete_url", "cookies_str_to_dict", 
-    "headers_str_to_dict_by_lines", "headers_str_to_dict", 
-    "encode_multipart_data", "encode_multipart_data_async", 
+    "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
+    "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
+    "headers_str_to_dict", "encode_multipart_data", "encode_multipart_data_async", 
+    "normalize_request_args", 
 ]
 
 from collections import UserString
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, Mapping, 
+    AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, 
+    Mapping, Sequence, 
 )
+from decimal import Decimal
+from fractions import Fraction
 from io import TextIOWrapper
 from itertools import batched
 from mimetypes import guess_type
+from numbers import Integral, Real
 from os import PathLike
 from os.path import basename
 from re import compile as re_compile, Pattern
-from typing import runtime_checkable, Any, Final, Protocol, TypeVar
-from urllib.parse import quote, urlsplit, urlunsplit
+from string import punctuation
+from typing import runtime_checkable, Any, Final, Protocol, TypedDict
+from urllib.parse import quote, urlparse, urlunparse
 from uuid import uuid4
+from yarl import URL
 
 from asynctools import async_map
-from dicttools import iter_items
+from dicttools import dict_map, iter_items
+from ensure import ensure_bytes, ensure_buffer, ensure_str
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
-from integer_tool import int_to_bytes
+from http_response import get_charset, get_mimetype
+from orjson import dumps as json_dumps
 from texttools import text_to_dict
 
 
-AnyStr = TypeVar("AnyStr", bytes, str, covariant=True)
+type string = Buffer | str | UserString
 
+QUERY_KEY_TRANSTAB: Final = {k: f"%{k:02X}" for k in b"&="}
 CRE_URL_SCHEME_match: Final = re_compile(r"(?i:[a-z][a-z0-9.+-]*)://").match
 
 
+class RequestArgs(TypedDict):
+    method: str
+    url: str
+    data: Buffer | Iterable[Buffer] | AsyncIterable[Buffer]
+    headers: dict[str, str]
+
+
 @runtime_checkable
-class SupportsGeturl(Protocol[AnyStr]):
+class SupportsGeturl[AnyStr: (bytes, str)](Protocol):
     def geturl(self) -> AnyStr: ...
 
 
@@ -49,7 +66,7 @@ def url_origin(url: str, /, default_port: int = 0) -> str:
         url = "http" + url
     elif not CRE_URL_SCHEME_match(url):
         url = "http://" + url
-    urlp = urlsplit(url)
+    urlp = urlparse(url)
     scheme, netloc = urlp.scheme or "http", urlp.netloc or "localhost"
     if default_port and not urlp.port:
         netloc = netloc.removesuffix(":") + f":{default_port}"
@@ -65,7 +82,7 @@ def complete_url(url: str, /, default_port: int = 0) -> str:
         url = "http" + url
     elif not CRE_URL_SCHEME_match(url):
         url = "http://" + url
-    urlp = urlsplit(url)
+    urlp = urlparse(url)
     repl = {"query": "", "fragment": ""}
     if not urlp.scheme:
         repl["scheme"] = "http"
@@ -75,7 +92,53 @@ def complete_url(url: str, /, default_port: int = 0) -> str:
     if default_port and not urlp.port:
         netloc = netloc.removesuffix(":") + f":{default_port}"
     repl["netloc"] = netloc
-    return urlunsplit(urlp._replace(**repl)).rstrip("/")
+    return urlunparse(urlp._replace(**repl)).rstrip("/")
+
+
+def ensure_ascii_url(url: str, /) -> str:
+    if url.isascii():
+        return url
+    return quote(url, safe=punctuation)
+
+
+def urlencode(
+    payload: string | Mapping[Any, Any] | Iterable[tuple[Any, Any]], 
+    /, 
+    encoding: str = "utf-8", 
+    errors: str = "strict", 
+) -> str:
+    if isinstance(payload, str):
+        return payload
+    elif isinstance(payload, UserString):
+        return str(payload)
+    elif isinstance(payload, Buffer):
+        return str(payload, encoding, errors)
+    def encode_iter(payload: Iterable[tuple[Any, Any]], /) -> Iterator[str]:
+        for i, (k, v) in enumerate(payload):
+            if i:
+                yield "&"
+            if isinstance(k, Buffer):
+                k = str(k, encoding, errors)
+            else:
+                k = str(k)
+            yield k.translate(QUERY_KEY_TRANSTAB)
+            yield "="
+            if v is True:
+                yield "true"
+            elif v is False:
+                yield "false"
+            elif v is None:
+                yield "null"
+            elif isinstance(v, (str, UserString)):
+                pass
+            elif isinstance(v, Buffer):
+                v = str(v, encoding, errors)
+            elif isinstance(v, (Mapping, Iterable)):
+                v = json_dumps(v, default=json_default).decode("utf-8")
+            else:
+                v = str(v)
+            yield v.replace("&", "%26")
+    return "".join(encode_iter(iter_items(payload)))
 
 
 def cookies_str_to_dict(
@@ -101,46 +164,6 @@ def headers_str_to_dict_by_lines(headers: str, /, ) -> dict[str, str]:
     if len(lines) & 1:
         lines.append("")
     return dict(batched(lines, 2)) # type: ignore
-
-
-def ensure_bytes(
-    o, 
-    /, 
-    encoding: str = "utf-8", 
-    errors: str = "strict", 
-) -> bytes:
-    if isinstance(o, bytes):
-        return o
-    elif isinstance(o, memoryview):
-        return o.tobytes()
-    elif isinstance(o, Buffer):
-        return bytes(o)
-    elif isinstance(o, int):
-        return int_to_bytes(o)
-    elif isinstance(o, (str, UserString)):
-        return o.encode(encoding, errors)
-    try:
-        return bytes(o)
-    except TypeError:
-        return bytes(str(o), encoding, errors)
-
-
-def ensure_buffer(
-    o, 
-    /, 
-    encoding: str = "utf-8", 
-    errors: str = "strict", 
-) -> Buffer:
-    if isinstance(o, Buffer):
-        return o
-    elif isinstance(o, int):
-        return int_to_bytes(o)
-    elif isinstance(o, (str, UserString)):
-        return o.encode(encoding, errors)
-    try:
-        return bytes(o)
-    except TypeError:
-        return bytes(str(o), encoding, errors)
 
 
 def encode_multipart_data(
@@ -329,4 +352,98 @@ def encode_multipart_data_async(
         yield b'--%s--\r\n' % boundary_bytes
 
     return {"content-type": "multipart/form-data; boundary="+boundary}, encode_iter()
+
+
+def json_default(o, /):
+    if isinstance(o, Mapping):
+        return dict(o)
+    elif isinstance(o, Buffer):
+        return ensure_str(o)
+    elif isinstance(o, UserString):
+        return str(o)
+    elif isinstance(o, Integral):
+        return int(o)
+    elif isinstance(o, (Real, Fraction, Decimal)):
+        try:
+            return float(o)
+        except Exception:
+            return str(o)
+    elif isinstance(o, (Iterator, Sequence)):
+        return list(o)
+    else:
+        return str(o)
+
+
+def normalize_request_args(
+    method: string, 
+    url: string | SupportsGeturl | URL, 
+    params: Any = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    ensure_ascii: bool = False, 
+) -> RequestArgs:
+    method = ensure_str(method).upper()
+    if isinstance(url, SupportsGeturl):
+        url = url.geturl()
+    elif isinstance(url, URL):
+        url = str(url)
+    url = complete_url(ensure_str(url))
+    if params and (params := urlencode(params)):
+        urlp = urlparse(url)
+        if query := urlp.query:
+            params = query + "&" + params
+        url = urlunparse(urlp._replace(query=params))
+    if ensure_ascii:
+        url = ensure_ascii_url(url)
+    headers_ = dict_map(
+        headers or (), 
+        key=lambda k: ensure_str(k).lower(), 
+        value=ensure_str, 
+    )
+    content_type = headers_.get("content-type", "")
+    charset      = get_charset(content_type)
+    mimetype     = get_mimetype(charset).lower()
+    if data is not None:
+        if isinstance(data, Buffer):
+            pass
+        elif isinstance(data, (str, UserString)):
+            data = data.encode(charset)
+        elif isinstance(data, AsyncIterable):
+            data = async_map(ensure_buffer, data)
+        elif isinstance(data, Iterator):
+            data = map(ensure_buffer, data)
+        elif mimetype == "application/json":
+            if charset == "utf-8":
+                data = json_dumps(data, default=json_default)
+            else:
+                from json import dumps
+                data = dumps(data, default=json_default).encode(charset)
+        elif isinstance(data, (Mapping, Sequence)):
+            if data:
+                data = urlencode(data, charset).encode(charset)
+                if mimetype != "application/x-www-form-urlencoded":
+                    headers_["content-type"] = "application/x-www-form-urlencoded"
+        else:
+            data = str(data).encode(charset)
+    elif json is not None:
+        if isinstance(json, Buffer):
+            data = json
+        elif isinstance(data, AsyncIterable):
+            data = async_map(ensure_buffer, data)
+        if charset == "utf-8":
+            data = json_dumps(data, default=json_default)
+        else:
+            from json import dumps
+            data = dumps(data, default=json_default).encode(charset)
+        if mimetype != "application/json":
+            headers_["content-type"] = "application/json; charset=" + charset
+    elif mimetype == "application/json":
+        data = b"null"
+    return {
+        "url": url, 
+        "method": method, 
+        "data": data, 
+        "headers": headers_
+    }
 

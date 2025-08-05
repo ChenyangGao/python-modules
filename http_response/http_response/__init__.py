@@ -2,46 +2,73 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 5)
 __all__ = [
-    "headers_get", "get_filename", "get_content_length", "get_length", 
-    "get_total_length", "get_range", "is_chunked", "is_range_request", 
+    "headers_get", "get_filename", "get_mimetype", "get_charset", 
+    "get_content_length", "get_length", "get_total_length", 
+    "get_range", "is_chunked", "is_range_request", "parse_response", 
 ]
 
-from collections.abc import Callable, Container, Mapping
+from codecs import lookup
+from collections.abc import Container, Iterable, Mapping
 from mimetypes import guess_extension, guess_type
 from posixpath import basename
-from re import compile as re_compile
-from typing import Final, Optional
+from re import compile as re_compile, IGNORECASE
+from typing import cast, Final
 from urllib.parse import parse_qsl, urlsplit, unquote
+
+from dicttools import get
+from orjson import loads
 
 
 CRE_CONTENT_RANGE_fullmatch: Final = re_compile(r"bytes\s+(?:\*|(?P<begin>[0-9]+)-(?P<end>[0-9]+))/(?:(?P<size>[0-9]+)|\*)").fullmatch
 CRE_HDR_CD_FNAME_search: Final = re_compile("(?<=filename=\")[^\"]+|(?<=filename=')[^']+|(?<=filename=)[^'\"][^;]*").search
 CRE_HDR_CD_FNAME_STAR_search: Final = re_compile("(?<=filename\\*=)(?P<charset>[^']*)''(?P<name>[^;]+)").search
+CRE_CHARSET_search = re_compile(r"\bcharset\s*=(?P<charset>[^ ;]+)", IGNORECASE).search
 
 
-def headers_get(response, /, key, default=None, parse=None):
-    if hasattr(response, "headers"):
+def headers_get(response, /, key: bytes | str, default=None, parse=None):
+    if hasattr(response, "getheaders"):
+        headers = response.getheaders
+    elif hasattr(response, "headers"):
         headers = response.headers
     else:
         headers = response
-    try:
-        val = headers[key]
-    except KeyError:
-        return default
+    headers = cast(Mapping | Iterable[tuple[bytes|str, bytes|str]], headers)
+    key2: bytes | str
+    if isinstance(headers, Mapping):
+        val = get(headers, key, default=None)
+        if val is None:
+            if isinstance(key, str):
+                key2 = bytes(key, "latin-1")
+            else:
+                key2 = str(key, "latin-1")
+            val = get(headers, key2, default=None)
+            if val is None:
+                return default
     else:
-        if parse is None:
-            return val
-        elif callable(parse):
-            return parse(val)
-        elif isinstance(parse, (bytes, str)):
-            return val == parse
-        elif isinstance(parse, Mapping):
-            return headers_get(parse, val, default)
-        elif isinstance(parse, Container):
-            return val in parse
+        key = key.lower()
+        if isinstance(key, str):
+            key2 = bytes(key, "latin-1")
+        else:
+            key2 = str(key, "latin-1")
+        for k, val in headers:
+            k = k.lower()
+            if k == key or k == key2:
+                break
+        else:
+            return default
+    if parse is None:
         return val
+    elif callable(parse):
+        return parse(val)
+    elif isinstance(parse, (bytes, str)):
+        return val == parse
+    elif isinstance(parse, Mapping):
+        return headers_get(parse, val, default)
+    elif isinstance(parse, Container):
+        return val in parse
+    return val
 
 
 def get_filename(response, /, default: str = "") -> str:
@@ -71,13 +98,26 @@ def get_filename(response, /, default: str = "") -> str:
     return filename
 
 
-def get_content_length(response, /) -> Optional[int]:
+def get_mimetype(content_type: str, /) -> str:
+    return content_type.strip(" ;").partition(";")[0].strip()
+
+
+def get_charset(content_type: str, /, default="utf-8") -> str:
+    if match := CRE_CHARSET_search(content_type):
+        try:
+            return lookup(match["charset"]).name
+        except LookupError:
+            return match["charset"].strip()
+    return default
+
+
+def get_content_length(response, /) -> None | int:
     if length := headers_get(response, "content-length"):
         return int(length)
     return None
 
 
-def get_length(response, /) -> Optional[int]:
+def get_length(response, /) -> None | int:
     if (length := get_content_length(response)) is not None:
         return length
     if rng := get_range(response):
@@ -85,13 +125,13 @@ def get_length(response, /) -> Optional[int]:
     return None
 
 
-def get_total_length(response, /) -> Optional[int]:
+def get_total_length(response, /) -> None | int:
     if rng := get_range(response):
         return rng[-1]
     return get_content_length(response)
 
 
-def get_range(response, /) -> Optional[tuple[int, int, int]]:
+def get_range(response, /) -> None | tuple[int, int, int]:
     hdr_cr = headers_get(response, "content-range")
     if not hdr_cr:
         return None
@@ -120,4 +160,24 @@ def is_chunked(response, /) -> bool:
 def is_range_request(response, /) -> bool:
     return bool(headers_get(response, "accept-ranges", parse="bytes")
                 or headers_get(response, "content-range"))
+
+
+def parse_response(
+    response, 
+    content: bytes, 
+    /, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    content_type = headers_get(response, "content-type", default="")
+    if not isinstance(content_type, str):
+        content_type = str(content_type, "latin-1")
+    mimetype = get_mimetype(content_type)
+    charset  = get_charset(content_type)
+    if mimetype == "application/json":
+        if charset == "utf-8":
+            return loads(content)
+        else:
+            return loads(content.decode(charset))
+    elif content_type.startswith("text/"):
+        return content.decode(charset)
+    return content
 

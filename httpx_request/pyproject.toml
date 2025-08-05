@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "httpx_request"
-version = "0.1.4"
+version = "0.1.5"
 description = "httpx request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,9 +27,14 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-httpx = ">=0.28"
-python-argtools = ">=0.0.1"
-python-asynctools = ">=0.1.2"
+httpx = "*"
+http_response = ">=0.0.5"
+python-argtools = ">=0.0.2"
+python-dicttools = ">=0.0.1"
+python-ensure = ">=0.0.1"
+python-filewrap = ">=0.2.8"
+python-http_request = ">=0.0.9"
+yarl = "*"
 
 [build-system]
 requires = ["poetry-core"]

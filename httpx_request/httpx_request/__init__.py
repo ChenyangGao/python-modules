@@ -2,25 +2,37 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 4)
+__version__ = (0, 1, 5)
 __all__ = ["request", "request_sync", "request_async"]
 
-from collections.abc import Awaitable, Callable
+from collections import UserString
+from collections.abc import (
+    Awaitable, Buffer, Callable, Iterable, Mapping, 
+)
 from contextlib import aclosing, closing
 from inspect import isawaitable, signature
-from json import loads
+from os import PathLike
 from types import EllipsisType
-from typing import cast, overload, Any, Literal
+from typing import cast, overload, Any, Final, Literal
 
-from asynctools import run_async
+from asynctools import async_map, run_async
 from argtools import argcount
-from httpx import AsyncHTTPTransport, HTTPTransport
-from httpx._types import AuthTypes, SyncByteStream, URLTypes
-from httpx._client import AsyncClient, Client, Response, UseClientDefault, USE_CLIENT_DEFAULT
+from dicttools import get_all_items
+from ensure import ensure_buffer
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
+from http_request import normalize_request_args, SupportsGeturl
+from http_response import parse_response
+from httpx import AsyncHTTPTransport, HTTPTransport, Request, Response
+from httpx._types import SyncByteStream
+from httpx._client import AsyncClient, Client, Response
+from yarl import URL
 
 
-_BUILD_REQUEST_KWARGS = signature(Client.build_request).parameters.keys() - {"self"}
-_CLIENT_INIT_KWARGS = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARGS
+type string = Buffer | str | UserString
+
+_BUILD_REQUEST_KWARGS: Final = signature(Client.build_request).parameters.keys() - {"self"}
+_INIT_CLIENT_KWARGS: Final   = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARGS
+_SEND_REQUEST_KWARGS: Final  = ("auth", "stream", "follow_redirects")
 
 if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
@@ -41,179 +53,332 @@ if "__del__" not in Response.__dict__:
     setattr(Response, "__del__", __del__)
 
 
+@overload
 def request_sync(
-    url: URLTypes, 
-    method: str = "GET", 
-    # determine how to parse response data
-    parse: None | bool | EllipsisType | Callable = None, 
-    # raise for status
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    # pass in a Client instance
     session: None | Client = None, 
-    # Client.send params
-    auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
-    follow_redirects: bool | UseClientDefault = True, 
-    stream: bool = True, 
-    # Client.request params
+    *, 
+    parse: None = None, 
     **request_kwargs, 
-):
+) -> bytes:
+    ...
+@overload
+def request_sync(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | Client = None, 
+    *, 
+    parse: Literal[False], 
+    **request_kwargs, 
+) -> Response:
+    ...
+@overload
+def request_sync(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | Client = None, 
+    *, 
+    parse: Literal[True], 
+    **request_kwargs, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    ...
+@overload
+def request_sync[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | Client = None, 
+    *, 
+    parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
+    **request_kwargs, 
+) -> T:
+    ...
+def request_sync[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | Client = None, 
+    *, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
+    **request_kwargs, 
+) -> Response | bytes | str | dict | list | int | float | bool | None | T:
+    request_kwargs["follow_redirects"] = follow_redirects
+    request_kwargs.setdefault("stream", True)
     if session is None:
-        init_kwargs = {k: v for k, v in request_kwargs.items() if k in _CLIENT_INIT_KWARGS}
+        init_kwargs = dict(get_all_items(request_kwargs, *_INIT_CLIENT_KWARGS))
         if "transport" not in init_kwargs:
             init_kwargs["transport"] = HTTPTransport(http2=True, retries=5)
         session = Client(**init_kwargs)
-    resp = session.send(
-        request=session.build_request(
+    if isinstance(url, Request):
+        request = url
+    else:
+        if isinstance(data, PathLike):
+            data = bio_chunk_iter(open(data, "rb"))
+        elif isinstance(data, SupportsRead):
+            data = map(ensure_buffer, bio_chunk_iter(data))
+        request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 
-            **{k: v for k, v in request_kwargs.items() if k in _BUILD_REQUEST_KWARGS}, 
-        ), 
-        auth=auth, 
-        follow_redirects=follow_redirects, 
-        stream=stream, 
-    )
+            params=params, 
+            data=data, 
+            json=json, 
+            headers=headers, 
+        ))
+        request = session.build_request(**dict(get_all_items(request_kwargs, _BUILD_REQUEST_KWARGS)))
+    response = session.send(request, **dict(get_all_items(request_kwargs, _SEND_REQUEST_KWARGS)))
     # NOTE: keep ref to prevent gc
-    setattr(resp, "session", session)
-    if resp.status_code >= 400 and raise_for_status:
-        resp.raise_for_status()
+    setattr(response, "session", session)
+    if response.status_code >= 400 and raise_for_status:
+        response.raise_for_status()
     if parse is None:
-        return resp
+        return response
     elif parse is ...:
-        resp.close()
-        return resp
-    with closing(resp):
-        if parse is False:
-            return resp.read()
-        elif parse is True:
-            resp.read()
-            content_type = resp.headers.get("Content-Type", "")
-            if content_type == "application/json":
-                return resp.json()
-            elif content_type.startswith("application/json;"):
-                return loads(resp.text)
-            elif content_type.startswith("text/"):
-                return resp.text
-            return resp.content
+        response.close()
+        return response
+    with closing(response):
+        if isinstance(parse, bool):
+            content = response.read()
+            if parse:
+                return parse_response(response, content)
+            return content
+        ac = argcount(parse)
+        if ac == 1:
+            return cast(Callable[[Response], T], parse)(response)
         else:
-            ac = argcount(parse)
-            if ac == 1:
-                return parse(resp)
-            else:
-                return parse(resp, resp.read())
+            return cast(Callable[[Response, bytes], T], parse)(response, response.read())
 
 
+@overload
 async def request_async(
-    url: URLTypes, 
-    method: str = "GET", 
-    # determine how to parse response data
-    parse: None | bool | EllipsisType | Callable = None, 
-    # raise for status
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    # pass in an AsyncClient instance
     session: None | AsyncClient = None, 
-    # AsyncClient.send params
-    auth: None | AuthTypes | UseClientDefault = USE_CLIENT_DEFAULT, 
-    follow_redirects: bool | UseClientDefault = True, 
-    stream: bool = True, 
+    *, 
+    parse: None = None, 
     **request_kwargs, 
-):
+) -> bytes:
+    ...
+@overload
+async def request_async(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | AsyncClient = None, 
+    *, 
+    parse: Literal[False], 
+    **request_kwargs, 
+) -> Response:
+    ...
+@overload
+async def request_async(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | AsyncClient = None, 
+    *, 
+    parse: Literal[True], 
+    **request_kwargs, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    ...
+@overload
+async def request_async[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | AsyncClient = None, 
+    *, 
+    parse: Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]], 
+    **request_kwargs, 
+) -> T:
+    ...
+async def request_async[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    session: None | AsyncClient = None, 
+    *, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
+    **request_kwargs, 
+) -> Response | bytes | str | dict | list | int | float | bool | None | T:
+    request_kwargs["follow_redirects"] = follow_redirects
+    request_kwargs.setdefault("stream", True)
     if session is None:
-        init_kwargs = {k: v for k, v in request_kwargs.items() if k in _CLIENT_INIT_KWARGS}
+        init_kwargs = dict(get_all_items(request_kwargs, *_INIT_CLIENT_KWARGS))
         if "transport" not in init_kwargs:
             init_kwargs["transport"] = AsyncHTTPTransport(http2=True, retries=5)
         session = AsyncClient(**init_kwargs)
-    resp = await session.send(
-            request=session.build_request(
+    if isinstance(url, Request):
+        request = url
+    else:
+        if isinstance(data, PathLike):
+            data = bio_chunk_async_iter(open(data, "rb"))
+        elif isinstance(data, SupportsRead):
+            data = async_map(ensure_buffer, bio_chunk_async_iter(data))
+        request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 
-            **{k: v for k, v in request_kwargs.items() if k in _BUILD_REQUEST_KWARGS}, 
-        ), 
-        auth=auth, 
-        follow_redirects=follow_redirects, 
-        stream=stream, 
-    )
-    setattr(resp, "session", session)
-    if resp.status_code >= 400 and raise_for_status:
-        resp.raise_for_status()
+            params=params, 
+            data=data, 
+            json=json, 
+            headers=headers, 
+        ))
+        request = session.build_request(**dict(get_all_items(request_kwargs, _BUILD_REQUEST_KWARGS)))
+    response = await session.send(request, **dict(get_all_items(request_kwargs, _SEND_REQUEST_KWARGS)))
+    setattr(response, "session", session)
+    if response.status_code >= 400 and raise_for_status:
+        response.raise_for_status()
     if parse is None:
-        return resp
+        return response
     elif parse is ...:
-        await resp.aclose()
-        return resp
-    async with aclosing(resp):
-        if parse is False:
-            return await resp.aread()
-        elif parse is True:
-            await resp.aread()
-            content_type = resp.headers.get("Content-Type", "")
-            if content_type == "application/json":
-                return resp.json()
-            elif content_type.startswith("application/json;"):
-                return loads(resp.text)
-            elif content_type.startswith("text/"):
-                return resp.text
-            return resp.content
+        await response.aclose()
+        return response
+    async with aclosing(response):
+        if isinstance(parse, bool):
+            content = await response.aread()
+            if parse:
+                return parse_response(response, content)
+            return content
+        ac = argcount(parse)
+        if ac == 1:
+            ret = cast(Callable[[Response], T] | Callable[[Response], Awaitable[T]], parse)(response)
         else:
-            ac = argcount(parse)
-            if ac == 1:
-                ret = parse(resp)
-            else:
-                ret = parse(resp, await resp.aread())
-            if isawaitable(ret):
-                ret = await ret
-            return ret
+            ret = cast(Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]], parse)(
+                response, await response.aread())
+        if isawaitable(ret):
+            ret = await ret
+        return ret
 
 
 @overload
-def request(
-    url: URLTypes, 
-    method: str = "GET", 
-    parse: None | bool | EllipsisType | Callable = None, 
+def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     session: None | Client = None, 
     *, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
     async_: Literal[False] = False, 
     **request_kwargs, 
-) -> Any:
+) -> Response | bytes | str | dict | list | int | float | bool | None | T:
     ...
 @overload
-def request(
-    url: URLTypes, 
-    method: str = "GET", 
-    parse: None | bool | EllipsisType | Callable = None, 
+def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     session: None | AsyncClient = None, 
     *, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
     async_: Literal[True], 
     **request_kwargs, 
-) -> Awaitable[Any]:
+) -> Awaitable[Response | bytes | str | dict | list | int | float | bool | None | T]:
     ...
-def request(
-    url: URLTypes, 
-    method: str = "GET", 
-    parse: None | bool | EllipsisType | Callable = None, 
+def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     session: None | Client | AsyncClient = None, 
     *, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
-):
+) -> Response | bytes | str | dict | list | int | float | bool | None | T | Awaitable[Response | bytes | str | dict | list | int | float | bool | None | T]:
     if async_:
         return request_async(
             url=url, 
             method=method, 
-            parse=parse, 
+            params=params, 
+            data=data, 
+            json=json, 
+            headers=headers, 
+            follow_redirects=follow_redirects, 
             raise_for_status=raise_for_status, 
             session=cast(None | AsyncClient, session), 
+            parse=parse, # type: ignore 
             **request_kwargs, 
         )
     else:
         return request_sync(
             url=url, 
             method=method, 
-            parse=parse, 
+            params=params, 
+            data=data, 
+            json=json, 
+            headers=headers, 
+            follow_redirects=follow_redirects, 
             raise_for_status=raise_for_status, 
             session=cast(None | Client, session), 
+            parse=parse, # type: ignore  
             **request_kwargs, 
         )
 

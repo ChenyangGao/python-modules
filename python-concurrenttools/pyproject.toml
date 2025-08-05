@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "python-concurrenttools"
+version = "0.1.0"
+description = "Python concurrent tools."
+authors = ["ChenyangGao <wosiwujm@gmail.com>"]
+license = "MIT"
+readme = "readme.md"
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-concurrenttools"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-concurrenttools"
+keywords = ["concurrent", "tools"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+include = [
+    "LICENSE",
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+python-argtools = "*"
+python-asynctools = ">=0.1.3"
+python-decotools = ">=0.0.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.packages]]
+include = "concurrenttools"

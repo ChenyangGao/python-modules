@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = [
     "get", "get_first", "get_first_item", "get_all", "get_all_items", 
     "pop", "pop_first", "pop_first_item", "pop_all", "pop_all_items", 
@@ -135,19 +135,19 @@ def get_first_item[K, V](
 def get_first_item[K, V, K2, V2](
     m: Mapping[K, V], 
     /, 
-    *keys: K | K2, 
+    *keys: K2, 
     default: V2, 
-) -> tuple[K | K2, V | V2]:
+) -> tuple[K2, V | V2]:
     ...
 def get_first_item[K, V, K2, V2](
     m: Mapping[K, V], 
     /, 
-    *keys: K | K2, 
+    *keys: K2, 
     default: Undefined | V2 = undefined, 
-) -> tuple[K | K2, V | V2]:
+) -> tuple[K, V] | tuple[K2, V | V2]:
     for k in keys:
         try:
-            return k, m[k] # type: ignore
+            return k, m[cast(K, k)]
         except (LookupError, TypeError):
             pass
     if default is undefined:
@@ -176,7 +176,7 @@ def get_all[K, V, V2](
     /, 
     *keys, 
     default: Undefined | V2 = undefined, 
-) -> list[V | V2]:
+) -> list[V] | list[V | V2]:
     if default is undefined:
         return [m[k] for k in keys if k in m]
     return [get(m, k, default) for k in keys]
@@ -194,18 +194,18 @@ def get_all_items[K, V](
 def get_all_items[K, V, K2, V2](
     m: Mapping[K, V], 
     /, 
-    *keys, 
+    *keys: K2, 
     default: V2, 
-) -> list[tuple[K | K2, V | V2]]:
+) -> list[tuple[K2, V | V2]]:
     ...
 def get_all_items[K, V, K2, V2](
     m: Mapping[K, V], 
     /, 
-    *keys, 
+    *keys: K2, 
     default: Undefined | V2 = undefined, 
-) -> list[tuple[K | K2, V | V2]]:
+) -> list[tuple[K, V]] | list[tuple[K2, V | V2]]:
     if default is undefined:
-        return [(k, m[k]) for k in keys if k in m]
+        return [(cast(K, k), m[cast(K, k)]) for k in keys if k in m]
     return [(k, get(m, k, default)) for k in keys]
 
 
@@ -231,20 +231,18 @@ def pop[K, V, V2](
     /, 
     default: Undefined | V2 = undefined, 
 ) -> V | V2:
-    try:
-        if isinstance(m, dict):
-            return m.pop(k)
-        else:
-            v = m[k]
-            try:
-                del m[k]
-            except LookupError:
-                pass
-            return v
-    except (LookupError, TypeError) as e:
+    if isinstance(m, dict):
         if default is undefined:
-            raise KeyError(k) from e
+            return m.pop(k)
+        return m.pop(k, cast(V2, default))
+    v = get(m, k, _null)
+    if v is _null:
+        if default is undefined:
+            raise KeyError(k)
         return cast(V2, default)
+    else:
+        del m[cast(K, k)]
+        return cast(V, v)
 
 
 @overload
@@ -291,19 +289,19 @@ def pop_first_item[K, V](
 def pop_first_item[K, V, K2, V2](
     m: MutableMapping[K, V], 
     /, 
-    *keys: K | K2, 
+    *keys: K2, 
     default: V2, 
-) -> tuple[K | K2, V | V2]:
+) -> tuple[K2, V | V2]:
     ...
 def pop_first_item[K, V, K2, V2](
     m: MutableMapping[K, V], 
     /, 
-    *keys: K | K2, 
+    *keys: K2, 
     default: Undefined | V2 = undefined, 
-) -> tuple[K | K2, V | V2]:
+) -> tuple[K, V] | tuple[K2, V | V2]:
     for k in keys:
         try:
-            return k, pop(m, k)
+            return cast(K, k), pop(m, cast(K, k))
         except KeyError:
             pass
     if default is undefined:
@@ -332,9 +330,10 @@ def pop_all[K, V, V2](
     /, 
     *keys, 
     default: Undefined | V2 = undefined, 
-) -> list[V | V2]:
+) -> list[V] | list[V | V2]:
     if default is undefined:
         return [pop(m, k) for k in keys if k in m]
+    default = cast(V2, default)
     return [pop(m, k, default) for k in keys] # type: ignore
 
 
@@ -350,18 +349,19 @@ def pop_all_items[K, V](
 def pop_all_items[K, V, K2, V2](
     m: MutableMapping[K, V], 
     /, 
-    *keys, 
+    *keys: K2, 
     default: V2, 
-) -> list[tuple[K | K2, V | V2]]:
+) -> list[tuple[K2, V | V2]]:
     ...
 def pop_all_items[K, V, K2, V2](
     m: MutableMapping[K, V], 
     /, 
-    *keys, 
+    *keys: K2, 
     default: Undefined | V2 = undefined, 
-) -> list[tuple[K | K2, V | V2]]:
+) -> list[tuple[K, V]] | list[tuple[K2, V | V2]]:
     if default is undefined:
-        return [(k, pop(m, k)) for k in keys if k in m]
+        return [(cast(K, k), pop(m, cast(K, k))) for k in keys if k in m]
+    default = cast(V2, default)
     return [(k, pop(m, k, default)) for k in keys] # type: ignore
 
 
@@ -801,7 +801,7 @@ def dict_update[K, V](
         for m in ms:
             update(m)
     if kwds:
-        update(kwds) # type: ignore
+        update(cast(dict[K, V], kwds))
     return d
 
 

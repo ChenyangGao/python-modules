@@ -2,53 +2,38 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 1, 0)
 __all__ = ["request"]
 
-from collections.abc import Buffer, Callable, ItemsView, Iterable, Mapping, Sequence
+from collections import UserString
+from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
-from re import compile as re_compile
+from os import PathLike
 from types import EllipsisType
-from typing import cast, runtime_checkable, Any, Protocol
+from typing import cast, overload, Any, IO, Literal
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import Request
 
 from argtools import argcount
 from cookietools import extract_cookies, cookies_dict_to_str, cookies_str_to_dict
-from urllib3 import HTTPHeaderDict, Retry, Timeout
-from urllib3.exceptions import MaxRetryError
+from dicttools import dict_merge
+from ensure import ensure_buffer
+from filewrap import bio_chunk_iter, SupportsRead
+from http_request import normalize_request_args, SupportsGeturl
+from http_response import parse_response
 from urllib3.poolmanager import PoolManager
 from urllib3.response import HTTPResponse
 from urllib3.util.url import _normalize_host as normalize_host
-
-try:
-    from orjson import loads
-except ImportError:
-    from json import loads
+from yarl import URL
 
 
+type string = Buffer | str | UserString
+
+_DEFAULT_POOL = PoolManager(128)
 if "__del__" not in PoolManager.__dict__:
     setattr(PoolManager, "__del__", PoolManager.clear)
-
-CRE_search_charset = re_compile(r"\bcharset=(?P<charset>[^ ;]+)").search
-
-
-@runtime_checkable
-class SupportsGeturl[AnyStr: (str, bytes)](Protocol):
-    def geturl(self, /) -> AnyStr: ...
-
-
-def str_url(url: Any, /) -> str:
-    if not isinstance(url, str):
-        if isinstance(url, SupportsGeturl):
-            url = url.geturl()
-        if isinstance(url, Buffer):
-            url = str(url, "utf-8")
-        else:
-            url = str(url)
-    return url
 
 
 def origin_tuple(url: str, /) -> tuple[str, str, int]:
@@ -67,153 +52,194 @@ def is_same_origin(url1: str, url2: str, /) -> bool:
     return origin_tuple(url1) == origin_tuple(url2)
 
 
-def get_charset(content_type: str, default="utf-8") -> str:
-    match = CRE_search_charset(content_type)
-    if match is None:
-        return "utf-8"
-    return match["charset"]
-
-
-def parse_response(
-    response: HTTPResponse, 
-    parse: None | EllipsisType | bool | Callable = None, 
-):
-    if parse is None:
-        return response
-    elif parse is ...:
-        response.close()
-        return response
-    with response:
-        if isinstance(parse, bool):
-            content = response.read()
-            if parse:
-                content_type = response.headers.get("Content-Type") or ""
-                if content_type == "application/json":
-                    return response.json()
-                elif content_type.startswith("application/json;"):
-                    return loads(content.decode(get_charset(content_type)))
-                elif content_type.startswith("text/"):
-                    return content.decode(get_charset(content_type))
-            return content
-        else:
-            ac = argcount(parse)
-            with response:
-                if ac == 1:
-                    return parse(response)
-                else:
-                    return parse(response, response.read())
-
-
+@overload
 def request(
-    url: Any, 
-    method: str = "GET", 
-    params: None | str | Mapping | Sequence[tuple[Any, Any]] = None, 
-    data: None | Buffer | str | Mapping | Sequence[tuple[Any, Any]] | Iterable[Buffer] = None, 
-    headers: None | Mapping[str, str] | Iterable[tuple[str, str]] = None, 
-    cookies: None | CookieJar | SimpleCookie = None, 
-    parse: None | EllipsisType | bool | Callable = None, 
-    redirect: bool = True, 
-    timeout: None | float | Timeout = Timeout(connect=5, read=60), 
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    pool: PoolManager = PoolManager(128), 
-    retries: None | int | Retry = Retry(connect=5, read=5), 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: PoolManager = _DEFAULT_POOL, 
+    *, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-):
-    url = str_url(url)
-    if params:
-        if not isinstance(params, (Buffer, str)):
-            params = urlencode(params)
-        if params:
-            if isinstance(params, Buffer):
-                params = str(params, "utf-8")
-            urlp = urlsplit(url)
-            if query := urlp.query:
-                query += "&" + params
-            else:
-                query = params
-            url = urlunsplit(urlp._replace(query=query))
-    if data is None:
-        pass
-    elif isinstance(data, Buffer):
-        request_kwargs["body"] = data
-    elif isinstance(data, (Mapping, Sequence)):
-        request_kwargs["fields"] = data
-    elif isinstance(data, Iterable):
-        request_kwargs["body"] = data
-    if retries and isinstance(retries, int):
-        retries = Retry.from_int(retries, redirect=redirect)
-    if headers:
-        if isinstance(headers, Mapping):
-            headers = ItemsView(headers)
-        headers = {k.lower(): v for k, v in headers}
+) -> HTTPResponse:
+    ...
+@overload
+def request(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: PoolManager = _DEFAULT_POOL, 
+    *, 
+    parse: Literal[False], 
+    **request_kwargs, 
+) -> bytes:
+    ...
+@overload
+def request(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: PoolManager = _DEFAULT_POOL, 
+    *, 
+    parse: Literal[True], 
+    **request_kwargs, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    ...
+@overload
+def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: PoolManager = _DEFAULT_POOL, 
+    *, 
+    parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
+    **request_kwargs, 
+) -> T:
+    ...
+def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: PoolManager = _DEFAULT_POOL, 
+    *, 
+    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
+    **request_kwargs, 
+) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
+    request_kwargs["preload_content"] = not stream
+    body: Any
+    if isinstance(url, Request):
+        request  = url
+        method   = request.method or "GET"
+        url      = request.full_url
+        data     = request.data
+        if isinstance(data, PathLike):
+            body = bio_chunk_iter(open(data, "rb"))
+        elif isinstance(data, SupportsRead):
+            body = map(ensure_buffer, bio_chunk_iter(data))
+        else:
+            body = data
+        headers_ = request.headers or {}
     else:
-        headers = {}
+        if isinstance(data, PathLike):
+            data = bio_chunk_iter(open(data, "rb"))
+        elif isinstance(data, SupportsRead):
+            data = map(ensure_buffer, bio_chunk_iter(data))
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            data=data, 
+            json=json, 
+            headers=headers, 
+            ensure_ascii=True, 
+        )
+        method   = request_args["method"]
+        url      = request_args["url"]
+        body     = request_args["data"]
+        headers_ = request_args["headers"]
+    cookies_dict = cookies_str_to_dict(headers_.get("cookie", ""))
     if cookies is None:
-        cookies = getattr(pool, "cookies", None)
+        cookies = getattr(session, "cookies", None)
     if cookies:
         netloc_endswith = urlsplit(url).netloc.endswith
-        cookies_dict = cookies_str_to_dict(headers.get("cookie", ""))
         if isinstance(cookies, CookieJar):
-            cookies_dict.update(
+            dict_merge(cookies_dict, (
                 (cookie.name, val)
                 for cookie in cookies 
                 if (val := cookie.value) and (domain := cookie.domain) and not netloc_endswith(domain)
-            )
+            ))
         else:
-            cookies_dict.update(
+            dict_merge(cookies_dict, (
                 (name, val)
                 for name, morsel in cookies.items()
                 if (val := morsel.value) and (not (domain := morsel.get("domain", "")) or netloc_endswith(domain))
+            ))
+    if cookies_dict:
+        headers_["cookie"] = cookies_dict_to_str(cookies_dict)
+    response_cookies = CookieJar()
+    request_kwargs["redirect"] = False
+    while True:
+        response = cast(HTTPResponse, session.request(
+            method=method, 
+            url=url, 
+            body=body, 
+            headers=headers_, 
+            **request_kwargs, 
+        ))
+        setattr(response, "cookies", response_cookies)
+        if cookies is not None:
+            extract_cookies(cookies, url, response) # type: ignore
+        extract_cookies(response_cookies, url, response)
+        if raise_for_status and response.status >= 400:
+            raise HTTPError(
+                url, 
+                response.status, 
+                response.reason or "", 
+                response.headers, # type: ignore
+                cast(IO[bytes], response), 
             )
+        redirect_location = follow_redirects and response.get_redirect_location()
+        if not redirect_location:
+            if parse is None:
+                return response
+            elif parse is ...:
+                response.close()
+                return response
+            with response:
+                if isinstance(parse, bool):
+                    content = response.read()
+                    if parse:
+                        return parse_response(response, content)
+                    return content
+                else:
+                    ac = argcount(parse)
+                    with response:
+                        if ac == 1:
+                            return cast(Callable[[HTTPResponse], T], parse)(response)
+                        else:
+                            return cast(Callable[[HTTPResponse, bytes], T], parse)(
+                                response, response.read())
+        dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
         if cookies_dict:
-            headers["cookie"] = cookies_dict_to_str(cookies_dict)
-    elif cookies is None:
-        cookies = CookieJar()
-    response = cast(HTTPResponse, pool.request(
-        method=method, 
-        url=url, 
-        headers=headers, 
-        preload_content=not stream, 
-        redirect=False, 
-        retries=retries, 
-        timeout=timeout, 
-        **request_kwargs, 
-    ))
-    setattr(response, "cookies", cookies)
-    extract_cookies(cookies, url, response) # type: ignore
-    if raise_for_status and response.status >= 400:
-        raise HTTPError(url, response.status, response.reason, response.headers, response) # type: ignore
-    redirect_location = redirect and response.get_redirect_location()
-    if not redirect_location:
-        return parse_response(response, parse)
-    redirect_location = redirect_location
-    redirect_location = cast(str, urljoin(url, redirect_location))
-    if response.status == 303:
-        method = "GET"
-        request_kwargs["body"] = None
-        headers = HTTPHeaderDict(headers)._prepare_for_method_change()
-    if retries:
-        if (rm_headers := retries.remove_headers_on_redirect) and not is_same_origin(url, redirect_location):
-            headers = {k: v for k, v in headers.items() if k not in rm_headers}
-        try:
-            retries = retries.increment(method, url, response=response)
-        except MaxRetryError:
-            if retries.raise_on_redirect:
-                response.drain_conn()
-                raise
-            return parse_response(response, parse)
-    response.drain_conn()
-    return request(
-        redirect_location, 
-        method, 
-        headers=headers, 
-        cookies=cookies, 
-        timeout=timeout, 
-        raise_for_status=raise_for_status, 
-        pool=pool, 
-        retries=retries, 
-        stream=stream, 
-        **request_kwargs, 
-    )
+            headers_["cookie"] = cookies_dict_to_str(cookies_dict)
+        url = urljoin(url, redirect_location)
+        if response.status == 303:
+            method = "GET"
+            body = None
+        response.drain_conn()
 

@@ -146,10 +146,17 @@ def urlopen(
             opener = build_opener(*handlers)
         else:
             opener = _opener
-    if timeout is undefined:
-        return opener.open(request)
-    else:
-        return opener.open(request, timeout=cast(None|float, timeout))
+    try:
+        if timeout is undefined:
+            response = opener.open(request)
+        else:
+            response = opener.open(request, timeout=cast(None|float, timeout))
+        setattr(response, "opener", opener)
+        return response
+    except HTTPError as e:
+        if response := getattr(e, "file", None):
+            setattr(response, "opener", opener)
+        raise
 
 
 @overload

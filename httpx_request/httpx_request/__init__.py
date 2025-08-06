@@ -157,7 +157,6 @@ def request_sync[T](
             request_kwargs, *_BUILD_REQUEST_KWARGS)))
     response = session.send(request, **dict(get_all_items(
         request_kwargs, *_SEND_REQUEST_KWARGS)))
-    # NOTE: keep ref to prevent gc
     setattr(response, "session", session)
     if response.status_code >= 400 and raise_for_status:
         response.raise_for_status()

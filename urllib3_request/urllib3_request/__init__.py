@@ -201,6 +201,7 @@ def request[T](
             headers=headers_, 
             **request_kwargs, 
         ))
+        setattr(response, "session", session)
         setattr(response, "cookies", response_cookies)
         if cookies is not None:
             extract_cookies(cookies, url, response) # type: ignore

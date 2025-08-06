@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "blacksheep_client_request"
-version = "0.0.4"
+version = "0.1.0"
 description = "blacksheep request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,12 +29,16 @@ include = [
 python = "^3.12"
 blacksheep = "*"
 brotli = "*"
-http_response = "*"
+http_response = ">=0.0.5"
 multidict = "*"
-python-asynctools = ">=0.0.4"
 python-argtools = "*"
-python-cookietools = ">=0.0.4"
-python-filewrap = "*"
+python-asynctools = ">=0.1.3"
+python-cookietools = ">=0.0.8"
+python-dicttools = ">=0.0.2"
+python-ensure = ">=0.0.1"
+python-filewrap = ">=0.2.8"
+python-http_request = ">=0.0.10"
+python-undefined = ">=0.0.3"
 zstandard = "*"
 
 [build-system]

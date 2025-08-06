@@ -4,23 +4,25 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 1, 0)
 __all__ = ["request"]
 
 from collections import UserString
-from collections.abc import AsyncGenerator, AsyncIterable, Buffer, Callable, Iterable, Mapping
+from collections.abc import (
+    AsyncGenerator, AsyncIterable, Awaitable, Buffer, Callable, 
+    Iterable, Mapping, 
+)
 from gzip import decompress as decompress_gzip
 from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from inspect import isawaitable
 from os import PathLike
 from types import EllipsisType
-from typing import cast, Any, Literal
+from typing import cast, overload, Any, Literal
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
 from blacksheep.client.session import ClientSession
-from blacksheep.client.cookies import Cookie as BlackSheepCookie, CookieJar as BlackSheepCookieJar
 from blacksheep.client.exceptions import UnsupportedRedirect
 from blacksheep.common.types import normalize_headers
 from blacksheep.contents import Content, StreamedContent
@@ -28,18 +30,18 @@ from blacksheep.exceptions import HTTPException
 from blacksheep.messages import Request, Response
 from cookietools import update_cookies
 from ensure import ensure_buffer
-from filewrap import SupportsRead
+from filewrap import bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
-from filewrap import bio_chunk_async_iter
 from multidict import CIMultiDict
 from yarl import URL
 from undefined import undefined, Undefined
 
 
 type string = Buffer | str | UserString
+
 _DEFAULT_SESSION: ClientSession
-COOKIE_ATTRS =signature(Cookie).parameters.keys()
+#COOKIE_ATTRS =signature(Cookie).parameters.keys()
 
 
 def _get_default_session() -> ClientSession:
@@ -118,6 +120,7 @@ class ResponseWrapper:
         return f"{type(self).__qualname__}({self.response!r})"
 
 
+@overload
 async def request(
     url: string | SupportsGeturl | URL | Request, 
     method: string = "GET", 
@@ -127,12 +130,79 @@ async def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie | BlackSheepCookieJar = None, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
-    parse: None | EllipsisType = None, 
+    parse: None = None, 
     **request_kwargs, 
-):
+) -> bytes:
+    ...
+@overload
+async def request(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: None | Undefined | ClientSession = undefined, 
+    *, 
+    parse: Literal[False], 
+    **request_kwargs, 
+) -> Response:
+    ...
+@overload
+async def request(
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: None | Undefined | ClientSession = undefined, 
+    *, 
+    parse: Literal[True], 
+    **request_kwargs, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    ...
+@overload
+async def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: None | Undefined | ClientSession = undefined, 
+    *, 
+    parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], 
+    **request_kwargs, 
+) -> T:
+    ...
+async def request[T](
+    url: string | SupportsGeturl | URL | Request, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
+    session: None | Undefined | ClientSession = undefined, 
+    *, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
+    **request_kwargs, 
+) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs.pop("stream", None)
     if session is undefined:
         session = _get_default_session()
@@ -143,6 +213,7 @@ async def request(
     if isinstance(url, Request):
         request = url
     else:
+        content: None | Content = None
         if isinstance(data, Content):
             request_args = normalize_request_args(
                 method=method, 
@@ -150,7 +221,7 @@ async def request(
                 params=params, 
                 headers=headers, 
             )
-            request_args["data"] = data
+            content = data
         else:
             if isinstance(data, PathLike):
                 data = bio_chunk_async_iter(open(data, "rb"))
@@ -173,9 +244,11 @@ async def request(
         if data := request_args["data"]:
             content_type = bytes(headers_.get("content-type") or "application/octet-stream", "latin-1")
             if isinstance(data, Content):
-                pass
+                content = data
             elif isinstance(data, Buffer):
-                data = Content(content_type, data)
+                if not isinstance(data, bytes):
+                    data = bytes(data)
+                content = Content(content_type, data)
             else:
                 if not isinstance(data, AsyncGenerator):
                     async def as_gen(data, /):
@@ -186,40 +259,60 @@ async def request(
                             for chunk in data:
                                 yield ensure_buffer(chunk)
                     data = as_gen(data)
-                data = StreamedContent(content_type, data)
-        request = request.with_content(data)
+                content = StreamedContent(content_type, data)
+        if content:
+            request = request.with_content(content)
     if cookies is not None:
+        # from datetime import datetime
+        # from blacksheep.client.cookies import Cookie as BlackSheepCookie
         if isinstance(cookies, SimpleCookie):
-            request.cookies.update((name, BlackSheepCookie(name, morsel.value)) for name, morsel in cookies.items())
+            # request.cookies.update((name, BlackSheepCookie(name, morsel.value, **{
+            #     "expires": morsel.get("expires") and datetime.strptime(morsel["expires"], "%a, %d-%b-%Y %H:%M:%S GMT"), 
+            #     "domain": morsel.get("domain"), 
+            #     "path": morsel.get("path"), 
+            #     "secure": bool(morsel.get("secure")), 
+            #     "http_only": bool(morsel.get("httponly")), 
+            #     "max_age": int(morsel.get("max-age") or -1), 
+            # })) for name, morsel in cookies.items())
+            request.cookies.update((name, morsel.value) for name, morsel in cookies.items())
         else:
-            request.cookies.update((cookie.name, BlackSheepCookie(cookie.name, cookie.value)) for cookie in cookies)
+            # request.cookies.update((cookie.name, BlackSheepCookie(cookie.name, cookie.value, **{
+            #     "expires": cookie.expires and datetime.fromtimestamp(cookie.expires), 
+            #     "domain": cookie.domain, 
+            #     "path": cookie.path, 
+            #     "secure": bool(cookie.secure), 
+            #     "http_only": bool(cookie._rest and cookie._rest.get("HttpOnly")),      
+            #     "max_age": int(cookie._rest and cookie._rest.get("Max-Age") or -1), 
+            # })) for cookie in cookies if cookie.value is not None)
+            request.cookies.update((cookie.name, cookie.value) for cookie in cookies if cookie.value is not None)
     while True:
-        response = ResponseWrapper(await session.send(request))
-        resp_cookies = response.cookies
+        resp = await session.send(request)
+        setattr(resp, "session", session)
+        resp_cookies = resp.cookies
         if cookies is not None and resp_cookies:
             update_cookies(cookies, resp_cookies) # type: ignore
-        if response.status >= 400 and raise_for_status:
-            raise HTTPException(response.status, response.reason)
-        if follow_redirects and response.is_redirect():
+        if resp.status >= 400 and raise_for_status:
+            raise HTTPException(resp.status, resp.reason)
+        if follow_redirects and resp.is_redirect():
             try:
-                session.update_request_for_redirect(request, response)
+                session.update_request_for_redirect(request, resp)
                 continue
             except UnsupportedRedirect:
                 pass
+        response = ResponseWrapper(resp)
         if parse is None or parse is ...:
             return response
-        elif parse is False:
-            return await decompress_response(response)
-        if isinstance(response, bool):
+        elif isinstance(parse, bool):
             data = await decompress_response(response)
             if parse:
-                return parse_response(parse_response, data)
+                return parse_response(response, data)
             return data
         ac = argcount(parse)
         if ac == 1:
-            ret = parse(response)
+            ret = cast(Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], parse)(response)
         else:
-            ret = parse(response, await decompress_response(response))
+            ret = cast(Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]], parse)(
+                response, await decompress_response(response))
         if isawaitable(ret):
             ret = await ret
         return ret

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "requests_request"
-version = "0.1.0"
+version = "0.1.1"
 description = "requests request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,8 +29,8 @@ include = [
 python = "^3.12"
 http_response = ">=0.0.5"
 python-argtools = ">=0.0.2"
+python-cookietools = ">=0.0.7"
 python-dicttools = ">=0.0.1"
-python-ensure = ">=0.0.1"
 python-filewrap = ">=0.2.8"
 python-http_request = ">=0.0.9"
 requests = "*"

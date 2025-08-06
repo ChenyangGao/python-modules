@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 7)
 __all__ = ["request", "request_sync", "request_async"]
 
 from collections import UserString
@@ -10,21 +10,22 @@ from collections.abc import (
     Awaitable, Buffer, Callable, Iterable, Mapping, 
 )
 from contextlib import aclosing, closing
+from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from inspect import isawaitable, signature
 from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 
-from asynctools import async_map, run_async
 from argtools import argcount
+from cookietools import update_cookies
 from dicttools import get_all_items
-from ensure import ensure_buffer
-from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
+from filewrap import bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
 from httpx import (
-    Client, AsyncClient, HTTPTransport, AsyncHTTPTransport, 
-    Limits, Request, Response, SyncByteStream, 
+    Cookies, Client, AsyncClient, HTTPTransport, AsyncHTTPTransport, 
+    Limits, Request, Response, 
 )
 from undefined import undefined, Undefined
 from yarl import URL
@@ -40,17 +41,20 @@ if "__del__" not in Client.__dict__:
     setattr(Client, "__del__", Client.close)
 if "close" not in AsyncClient.__dict__:
     def close(self, /):
+        from asynctools import run_async
         return run_async(self.aclose())
     setattr(AsyncClient, "close", close)
 if "__del__" not in AsyncClient.__dict__:
     setattr(AsyncClient, "__del__", getattr(AsyncClient, "close"))
 if "__del__" not in Response.__dict__:
     def __del__(self, /):
+        from httpx import SyncByteStream
         if self.is_closed:
             return
         if isinstance(self.stream, SyncByteStream):
             self.close()
         else:
+            from asynctools import run_async
             return run_async(self.aclose())
     setattr(Response, "__del__", __del__)
 
@@ -76,6 +80,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: None = None, 
@@ -92,6 +97,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[False], 
@@ -108,6 +114,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[True], 
@@ -124,6 +131,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
@@ -139,6 +147,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
@@ -155,9 +164,9 @@ def request_sync[T](
         request = url
     else:
         if isinstance(data, PathLike):
-            data = bio_chunk_iter(open(data, "rb"))
+            data = bio_chunk_async_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = map(ensure_buffer, bio_chunk_iter(data))
+            data = bio_chunk_async_iter(data)
         request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 
@@ -168,9 +177,16 @@ def request_sync[T](
         ))
         request = session.build_request(**dict(get_all_items(
             request_kwargs, *_BUILD_REQUEST_KWARGS)))
+    if cookies is not None:
+        if isinstance(cookies, SimpleCookie):
+            request_kwargs["cookies"] = update_cookies(CookieJar(), cookies)
+        else:
+            request_kwargs["cookies"] = cookies
     response = session.send(request, **dict(get_all_items(
         request_kwargs, *_SEND_REQUEST_KWARGS)))
     setattr(response, "session", session)
+    if cookies is not None and response.cookies:
+        update_cookies(cookies, response.cookies.jar) # type: ignore
     if response.status_code >= 400 and raise_for_status:
         response.raise_for_status()
     if parse is None:
@@ -201,6 +217,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None = None, 
@@ -217,6 +234,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[False], 
@@ -233,6 +251,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[True], 
@@ -249,6 +268,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]], 
@@ -264,6 +284,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
@@ -282,7 +303,7 @@ async def request_async[T](
         if isinstance(data, PathLike):
             data = bio_chunk_async_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = async_map(ensure_buffer, bio_chunk_async_iter(data))
+            data = bio_chunk_async_iter(data)
         request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 
@@ -293,9 +314,16 @@ async def request_async[T](
         ))
         request = session.build_request(**dict(get_all_items(
             request_kwargs, *_BUILD_REQUEST_KWARGS)))
+    if cookies is not None:
+        if isinstance(cookies, SimpleCookie):
+            request_kwargs["cookies"] = update_cookies(CookieJar(), cookies)
+        else:
+            request_kwargs["cookies"] = cookies
     response = await session.send(request, **dict(get_all_items(
         request_kwargs, *_SEND_REQUEST_KWARGS)))
     setattr(response, "session", session)
+    if cookies is not None and response.cookies:
+        update_cookies(cookies, response.cookies.jar) # type: ignore
     if response.status_code >= 400 and raise_for_status:
         response.raise_for_status()
     if parse is None:
@@ -330,6 +358,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Undefined | Client = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
@@ -347,6 +376,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Undefined | AsyncClient = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
@@ -363,6 +393,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | Cookies | CookieJar | SimpleCookie = None, 
     session: None | Undefined | Client | AsyncClient = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
@@ -381,6 +412,7 @@ def request[T](
             headers=headers, 
             follow_redirects=follow_redirects, 
             raise_for_status=raise_for_status, 
+            cookies=cookies, 
             session=cast(None | AsyncClient, session), 
             parse=parse, # type: ignore 
             **request_kwargs, 
@@ -397,6 +429,7 @@ def request[T](
             headers=headers, 
             follow_redirects=follow_redirects, 
             raise_for_status=raise_for_status, 
+            cookies=cookies, 
             session=cast(None | Client, session), 
             parse=parse, # type: ignore  
             **request_kwargs, 

@@ -18,10 +18,8 @@ from typing import cast, overload, Any, Final, Literal
 
 from aiohttp import ClientResponse, ClientSession
 from argtools import argcount
-from asynctools import async_map
 from cookietools import update_cookies
 from dicttools import get_all_items
-from ensure import ensure_buffer
 from filewrap import bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
@@ -167,7 +165,7 @@ async def request[T](
     if isinstance(data, PathLike):
         data = bio_chunk_async_iter(open(data, "rb"))
     elif isinstance(data, SupportsRead):
-        data = async_map(ensure_buffer, bio_chunk_async_iter(data))
+        data = bio_chunk_async_iter(data)
     request_kwargs.update(normalize_request_args(
         method=method, 
         url=url, 

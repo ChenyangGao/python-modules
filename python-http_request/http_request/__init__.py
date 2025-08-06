@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -57,15 +57,17 @@ class SupportsGeturl[AnyStr: (bytes, str)](Protocol):
     def geturl(self) -> AnyStr: ...
 
 
-def url_origin(url: str, /, default_port: int = 0) -> str:
+def url_origin(
+    url: str, 
+    /, 
+    default_port: int = 0, 
+) -> str:
     if url.startswith("/"):
         url = "http://localhost" + url
     elif url.startswith("//"):
         url = "http:" + url
     elif url.startswith("://"):
         url = "http" + url
-    elif not CRE_URL_SCHEME_match(url):
-        url = "http://" + url
     urlp = urlparse(url)
     scheme, netloc = urlp.scheme or "http", urlp.netloc or "localhost"
     if default_port and not urlp.port:
@@ -73,17 +75,27 @@ def url_origin(url: str, /, default_port: int = 0) -> str:
     return f"{scheme}://{netloc}"
 
 
-def complete_url(url: str, /, default_port: int = 0) -> str:
+def complete_url(
+    url: str, 
+    /, 
+    default_port: int = 0, 
+    clean: bool = False, 
+) -> str:
     if url.startswith("/"):
         url = "http://localhost" + url
     elif url.startswith("//"):
         url = "http:" + url
     elif url.startswith("://"):
         url = "http" + url
-    elif not CRE_URL_SCHEME_match(url):
-        url = "http://" + url
+    if not (clean or default_port):
+        if not CRE_URL_SCHEME_match(url):
+            url = "http://" + url
+        return url
     urlp = urlparse(url)
-    repl = {"query": "", "fragment": ""}
+    if clean:
+        repl = {"params": "", "query": "", "fragment": ""}
+    else:
+        repl = {}
     if not urlp.scheme:
         repl["scheme"] = "http"
     netloc = urlp.netloc
@@ -91,7 +103,10 @@ def complete_url(url: str, /, default_port: int = 0) -> str:
         netloc = "localhost"
     if default_port and not urlp.port:
         netloc = netloc.removesuffix(":") + f":{default_port}"
-    repl["netloc"] = netloc
+    if netloc != urlp.netloc:
+        repl["netloc"] = netloc
+    if not repl:
+        return url
     return urlunparse(urlp._replace(**repl)).rstrip("/")
 
 

@@ -19,7 +19,6 @@ from urllib.request import Request
 from argtools import argcount
 from cookietools import extract_cookies, cookies_dict_to_str, cookies_str_to_dict
 from dicttools import dict_merge
-from ensure import ensure_buffer
 from filewrap import bio_chunk_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
@@ -156,7 +155,7 @@ def request[T](
         if isinstance(data, PathLike):
             body = bio_chunk_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            body = map(ensure_buffer, bio_chunk_iter(data))
+            body = bio_chunk_iter(data)
         else:
             body = data
         headers_ = request.headers
@@ -164,7 +163,7 @@ def request[T](
         if isinstance(data, PathLike):
             data = bio_chunk_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = map(ensure_buffer, bio_chunk_iter(data))
+            data = bio_chunk_iter(data)
         request_args = normalize_request_args(
             method=method, 
             url=url, 

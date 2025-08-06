@@ -2,23 +2,27 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 1)
 __all__ = ["request"]
 
 from collections import UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
+from copy import copy
+from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from inspect import signature
 from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 
 from argtools import argcount
+from cookietools import update_cookies
 from dicttools import get_all_items
-from ensure import ensure_buffer
 from filewrap import bio_chunk_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
 from requests import adapters
+from requests.cookies import RequestsCookieJar
 from requests.models import Request, Response
 from requests.sessions import Session
 from yarl import URL
@@ -50,6 +54,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: None | EllipsisType = None, 
@@ -67,6 +72,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Literal[False], 
@@ -84,6 +90,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Literal[True], 
@@ -101,6 +108,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
@@ -117,6 +125,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: None | EllipsisType| bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
@@ -126,13 +135,21 @@ def request[T](
     request_kwargs["stream"] = stream
     if session is None:
         session = Session()
+    if cookies is not None:
+        if isinstance(cookies, RequestsCookieJar):
+            request_kwargs["cookies"] = cookies
+        else:
+            request_kwargs["cookies"] = update_cookies(RequestsCookieJar(), cookies)
     if isinstance(url, Request):
         request = url
+        if cookies is not None:
+            request = copy(request)
+            request.cookies = cookies
     else:
         if isinstance(data, PathLike):
             data = bio_chunk_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = map(ensure_buffer, bio_chunk_iter(data))
+            data = bio_chunk_iter(data)
         request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 
@@ -152,6 +169,8 @@ def request[T](
     response = session.send(
         prep, **dict(get_all_items(request_kwargs, *_SEND_REQUEST_KWARGS)))
     setattr(response, "session", session)
+    if cookies is not None and response.cookies:
+        update_cookies(cookies, response.cookies) # type: ignore
     if raise_for_status:
         response.raise_for_status()
     if parse is None:

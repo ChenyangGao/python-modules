@@ -31,7 +31,6 @@ from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 from argtools import argcount
 from cookietools import cookies_dict_to_str
 from dicttools import iter_items
-from ensure import ensure_buffer
 from filewrap import bio_skip_iter, bio_chunk_iter, SupportsRead, SupportsWrite
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import (
@@ -123,7 +122,7 @@ def urlopen(
         if isinstance(data, PathLike):
             data = bio_chunk_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = map(ensure_buffer, bio_chunk_iter(data))
+            data = bio_chunk_iter(data)
         request = Request(**normalize_request_args( # type: ignore
             method=method, 
             url=url, 

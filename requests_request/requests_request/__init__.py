@@ -35,8 +35,8 @@ if "__del__" not in Response.__dict__:
 if "__del__" not in Session.__dict__:
     setattr(Session, "__del__", Session.close)
 
-_DEFAULT_SESSION = Session()
 adapters.DEFAULT_RETRIES = 5
+_DEFAULT_SESSION = Session()
 
 
 @overload

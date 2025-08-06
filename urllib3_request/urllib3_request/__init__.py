@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 2)
 __all__ = ["request"]
 
 from collections import UserString
@@ -31,9 +31,11 @@ from yarl import URL
 
 type string = Buffer | str | UserString
 
-_DEFAULT_POOL = PoolManager(128)
 if "__del__" not in PoolManager.__dict__:
     setattr(PoolManager, "__del__", PoolManager.clear)
+
+_DEFAULT_POOL = PoolManager(128)
+setattr(_DEFAULT_POOL, "cookies", CookieJar())
 
 
 def origin_tuple(url: str, /) -> tuple[str, str, int]:
@@ -64,7 +66,7 @@ def request(
     raise_for_status: bool = True, 
     stream: bool = True, 
     cookies: None | CookieJar | SimpleCookie = None, 
-    session: PoolManager = _DEFAULT_POOL, 
+    session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: None | EllipsisType = None, 
     **request_kwargs, 
@@ -82,7 +84,7 @@ def request(
     raise_for_status: bool = True, 
     stream: bool = True, 
     cookies: None | CookieJar | SimpleCookie = None, 
-    session: PoolManager = _DEFAULT_POOL, 
+    session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Literal[False], 
     **request_kwargs, 
@@ -100,7 +102,7 @@ def request(
     raise_for_status: bool = True, 
     stream: bool = True, 
     cookies: None | CookieJar | SimpleCookie = None, 
-    session: PoolManager = _DEFAULT_POOL, 
+    session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Literal[True], 
     **request_kwargs, 
@@ -118,7 +120,7 @@ def request[T](
     raise_for_status: bool = True, 
     stream: bool = True, 
     cookies: None | CookieJar | SimpleCookie = None, 
-    session: PoolManager = _DEFAULT_POOL, 
+    session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
     **request_kwargs, 
@@ -135,12 +137,16 @@ def request[T](
     raise_for_status: bool = True, 
     stream: bool = True, 
     cookies: None | CookieJar | SimpleCookie = None, 
-    session: PoolManager = _DEFAULT_POOL, 
+    session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
     **request_kwargs, 
 ) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs["preload_content"] = not stream
+    if session is None:
+        session = PoolManager()
+        if cookies is None:
+            setattr(session, "cookies", CookieJar())
     body: Any
     if isinstance(url, Request):
         request  = url
@@ -153,7 +159,7 @@ def request[T](
             body = map(ensure_buffer, bio_chunk_iter(data))
         else:
             body = data
-        headers_ = request.headers or {}
+        headers_ = request.headers
     else:
         if isinstance(data, PathLike):
             data = bio_chunk_iter(open(data, "rb"))
@@ -166,30 +172,31 @@ def request[T](
             data=data, 
             json=json, 
             headers=headers, 
-            ensure_ascii=True, 
         )
         method   = request_args["method"]
         url      = request_args["url"]
         body     = request_args["data"]
         headers_ = request_args["headers"]
-    cookies_dict = cookies_str_to_dict(headers_.get("cookie", ""))
     if cookies is None:
         cookies = getattr(session, "cookies", None)
-    if cookies:
-        netloc_endswith = urlsplit(url).netloc.endswith
-        if isinstance(cookies, CookieJar):
-            dict_merge(cookies_dict, (
-                (cookie.name, val)
-                for cookie in cookies 
-                if (val := cookie.value) and (domain := cookie.domain) and not netloc_endswith(domain)
-            ))
-        else:
-            dict_merge(cookies_dict, (
-                (name, val)
-                for name, morsel in cookies.items()
-                if (val := morsel.value) and (not (domain := morsel.get("domain", "")) or netloc_endswith(domain))
-            ))
-    if cookies_dict:
+    if "cookie" in headers_:
+        cookies_dict = cookies_str_to_dict(headers_["cookie"] or "")
+    else:
+        cookies_dict = {}
+        if cookies:
+            netloc_endswith = urlsplit(url).netloc.endswith
+            if isinstance(cookies, CookieJar):
+                dict_merge(cookies_dict, (
+                    (cookie.name, val)
+                    for cookie in cookies 
+                    if (val := cookie.value) is not None and ((domain := cookie.domain) or netloc_endswith(domain))
+                ))
+            else:
+                dict_merge(cookies_dict, (
+                    (name, val)
+                    for name, morsel in cookies.items()
+                    if (val := morsel.value) is not None and ((domain := morsel.get("domain", "")) or netloc_endswith(domain))
+                ))
         headers_["cookie"] = cookies_dict_to_str(cookies_dict)
     response_cookies = CookieJar()
     request_kwargs["redirect"] = False

@@ -2,13 +2,14 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 1)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
 
 from collections import UserString
 from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
+from copy import copy
 from gzip import decompress as decompress_gzip
 from http.client import HTTPResponse
 from http.cookiejar import CookieJar
@@ -28,6 +29,7 @@ from urllib.request import (
 from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
+from cookietools import cookies_dict_to_str
 from dicttools import iter_items
 from ensure import ensure_buffer
 from filewrap import bio_skip_iter, bio_chunk_iter, SupportsRead, SupportsWrite
@@ -47,7 +49,9 @@ if "__del__" not in HTTPResponse.__dict__:
 if "__del__" not in OpenerDirector.__dict__:
     setattr(OpenerDirector, "__del__", OpenerDirector.close)
 
-_opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context()))
+_cookies = CookieJar()
+_opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context()), HTTPCookieProcessor(_cookies))
+setattr(_opener, "cookies", _cookies)
 
 
 if getdefaulttimeout() is None:
@@ -110,7 +114,7 @@ def urlopen(
     context: None | SSLContext = None, 
     cookies: None | CookieJar = None, 
     timeout: None | Undefined | float = undefined, 
-    opener: None | OpenerDirector = None, 
+    opener: None | OpenerDirector = _opener, 
     **_, 
 ) -> HTTPResponse:
     if isinstance(url, Request):
@@ -132,30 +136,44 @@ def urlopen(
         if proxies:
             for host, type in iter_items(proxies):
                 request.set_proxy(host, type)
+    headers_ = request.headers
     if opener is None:
         handlers: list[BaseHandler] = []
-        if context is not None:
-            handlers.append(HTTPSHandler(context=context))
-        if cookies is not None:
-            handlers.append(HTTPCookieProcessor(cookies))
-        if not follow_redirects:
-            handlers.append(NoRedirectHandler())
-        if handlers:
-            if not isinstance(handlers[0], HTTPSHandler):
-                handlers.insert(0, HTTPSHandler(context=_create_unverified_context()))
-            opener = build_opener(*handlers)
-        else:
-            opener = _opener
+    else:
+        handlers = list(map(copy, getattr(opener, "handlers")))
+        if cookies is None:
+            cookies = getattr(opener, "cookies", None)
+    if cookies and "cookie" not in headers_:
+        headers_["cookie"] = cookies_dict_to_str(cookies)
+    if context is not None:
+        handlers.append(HTTPSHandler(context=context))
+    elif opener is None:
+        handlers.append(HTTPSHandler(context=_create_unverified_context()))
+    if cookies is not None and (opener is None or all(
+        h.cookiejar is not cookies 
+        for h in getattr(opener, "handlers") if isinstance(h, HTTPCookieProcessor)
+    )):
+        handlers.append(HTTPCookieProcessor(cookies))
+    response_cookies = CookieJar()
+    if cookies is None:
+        cookies = response_cookies
+    handlers.append(HTTPCookieProcessor(response_cookies))
+    if not follow_redirects:
+        handlers.append(NoRedirectHandler())
+    opener = build_opener(*handlers)
+    setattr(opener, "cookies", cookies)
     try:
         if timeout is undefined:
             response = opener.open(request)
         else:
             response = opener.open(request, timeout=cast(None|float, timeout))
         setattr(response, "opener", opener)
+        setattr(response, "cookies", response_cookies)
         return response
     except HTTPError as e:
         if response := getattr(e, "file", None):
             setattr(response, "opener", opener)
+            setattr(response, "cookies", response_cookies)
         raise
 
 
@@ -317,12 +335,10 @@ def download(
         chunksize = COPY_BUFSIZE
     headers = request_kwargs["headers"] = dict(headers or ())
     headers["accept-encoding"] = "identity"
-
     response: HTTPResponse = urlopen(url, **request_kwargs)
     content_length = get_length(response)
     if content_length == 0 and is_chunked(response):
         content_length = None
-
     fdst: SupportsWrite[bytes]
     if hasattr(file, "write"):
         file = fdst = cast(SupportsWrite[bytes], file)
@@ -335,7 +351,6 @@ def download(
         except FileNotFoundError:
             makedirs(dirname(file), exist_ok=True)
             fdst = open(file, "ab" if resume else "wb")
-
     filesize = 0
     if resume:
         try:
@@ -354,7 +369,6 @@ def download(
                     errno.EIO, 
                     f"file {file!r} is larger than url {url!r}: {filesize} > {content_length} (in bytes)", 
                 )
-
     reporthook_close: None | Callable = None
     if callable(make_reporthook):
         reporthook = make_reporthook(content_length)
@@ -367,7 +381,6 @@ def download(
         reporthook = cast(Callable[[int], Any], reporthook)
     else:
         reporthook = None
-
     try:
         if filesize:
             if is_range_request(response):
@@ -391,6 +404,5 @@ def download(
         response.close()
         if callable(reporthook_close):
             reporthook_close()
-
     return file
 

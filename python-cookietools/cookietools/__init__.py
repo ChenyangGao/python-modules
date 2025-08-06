@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "create_cookie", "create_morsel", "cookie_to_morsel", "morsel_to_cookie", 
     "extract_cookies", "update_cookies", "cookies_str_to_dict", "cookies_dict_to_str", 
@@ -10,7 +10,9 @@ __all__ = [
 ]
 
 from calendar import timegm
-from collections.abc import Buffer, ItemsView, Iterable, Iterator, Mapping, Sequence, ValuesView
+from collections.abc import (
+    Buffer, ItemsView, Iterable, Iterator, Mapping, Sequence, ValuesView, 
+)
 from copy import copy
 from datetime import datetime
 from http.client import HTTPMessage
@@ -289,8 +291,17 @@ def cookies_str_to_dict(cookies: str, /) -> dict[str, str]:
     return dict(cookie.split("=", 1) for cookie in CRE_COOKIE_SEP_split(cookies) if cookie)
 
 
-def cookies_dict_to_str(cookies: Mapping[str, str], /) -> str:
-    return "; ".join(f"{key}={cookies[key]}" for key in cookies)
+def cookies_dict_to_str(
+    cookies: Mapping[str, str] | Iterable[tuple[str, str]] | CookieJar | SimpleCookie, 
+    /, 
+) -> str:
+    if isinstance(cookies, CookieJar):
+        cookies = ((cookie.name, val) for cookie in cookies if (val := cookie.value) is not None)
+    elif isinstance(cookies, SimpleCookie):
+        cookies = ((name, morsel.value) for name, morsel in cookies.items())
+    else:
+        cookies = iter_items(cookies)
+    return "; ".join(f"{key}={val}" for key, val in cookies)
 
 
 def iter_resp_cookies(resp, /) -> Iterator[tuple[str, None | str]]:

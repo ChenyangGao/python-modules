@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 5)
+__version__ = (0, 1, 6)
 __all__ = ["request", "request_sync", "request_async"]
 
 from collections import UserString
@@ -22,9 +22,11 @@ from ensure import ensure_buffer
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
-from httpx import AsyncHTTPTransport, HTTPTransport, Request, Response
-from httpx._types import SyncByteStream
-from httpx._client import AsyncClient, Client, Response
+from httpx import (
+    Client, AsyncClient, HTTPTransport, AsyncHTTPTransport, 
+    Limits, Request, Response, SyncByteStream, 
+)
+from undefined import undefined, Undefined
 from yarl import URL
 
 
@@ -52,6 +54,17 @@ if "__del__" not in Response.__dict__:
             return run_async(self.aclose())
     setattr(Response, "__del__", __del__)
 
+_DEFAULT_CLIENT = Client(
+    limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
+    transport=HTTPTransport(retries=5), 
+    verify=False, 
+)
+_DEFAULT_ASYNC_CLIENT = AsyncClient(
+    limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
+    transport=AsyncHTTPTransport(retries=5), 
+    verify=False, 
+)
+
 
 @overload
 def request_sync(
@@ -63,7 +76,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: None = None, 
     **request_kwargs, 
@@ -79,7 +92,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[False], 
     **request_kwargs, 
@@ -95,7 +108,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[True], 
     **request_kwargs, 
@@ -111,7 +124,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
     **request_kwargs, 
@@ -126,7 +139,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Client = _DEFAULT_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
     **request_kwargs, 
@@ -188,7 +201,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None = None, 
     **request_kwargs, 
@@ -204,7 +217,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[False], 
     **request_kwargs, 
@@ -220,7 +233,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[True], 
     **request_kwargs, 
@@ -236,7 +249,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]], 
     **request_kwargs, 
@@ -251,7 +264,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
     **request_kwargs, 
@@ -317,7 +330,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client = None, 
+    session: None | Undefined | Client = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
     async_: Literal[False] = False, 
@@ -334,7 +347,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | AsyncClient = None, 
+    session: None | Undefined | AsyncClient = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
     async_: Literal[True], 
@@ -350,13 +363,15 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    session: None | Client | AsyncClient = None, 
+    session: None | Undefined | Client | AsyncClient = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T | Awaitable[Response | bytes | str | dict | list | int | float | bool | None | T]:
     if async_:
+        if session is undefined:
+            session = _DEFAULT_ASYNC_CLIENT
         return request_async(
             url=url, 
             method=method, 
@@ -371,6 +386,8 @@ def request[T](
             **request_kwargs, 
         )
     else:
+        if session is undefined:
+            session = _DEFAULT_CLIENT
         return request_sync(
             url=url, 
             method=method, 

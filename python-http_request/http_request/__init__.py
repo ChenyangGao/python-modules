@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 1)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -290,12 +290,10 @@ def encode_multipart_data(
     def encode_iter() -> Iterator[Buffer]:
         if data:
             for name, value in iter_items(data):
-                yield boundary_line
                 yield from encode_item(name, value)
                 yield b"\r\n"
         if files:
             for name, value in iter_items(files):
-                yield boundary_line
                 yield from encode_item(name, value, is_file=True)
                 yield b"\r\n"
         yield b'--%s--\r\n' % boundary_bytes
@@ -385,13 +383,11 @@ def encode_multipart_data_async(
     async def encode_iter() -> AsyncIterator[Buffer]:
         if data:
             for name, value in iter_items(data):
-                yield boundary_line
                 async for line in encode_item(name, value):
                     yield line
                 yield b"\r\n"
         if files:
             for name, value in iter_items(files):
-                yield boundary_line
                 async for line in encode_item(name, value, is_file=True):
                     yield line
                 yield b"\r\n"
@@ -453,7 +449,7 @@ def normalize_request_args(
     content_type = headers_.get("content-type", "")
     charset      = get_charset(content_type)
     mimetype     = get_mimetype(charset).lower()
-    if files is not None:
+    if files:
         headers2, data = encode_multipart_data(
             cast(None | Mapping[string, Any] | Iterable[tuple[string, Any]], data), 
             files, 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "httpx_request"
-version = "0.1.7"
+version = "0.1.8"
 description = "httpx request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -33,7 +33,7 @@ python-argtools = ">=0.0.2"
 python-cookietools = ">=0.0.6"
 python-dicttools = ">=0.0.1"
 python-filewrap = ">=0.2.8"
-python-http_request = ">=0.0.9"
+python-http_request = ">=0.1.0"
 python-undefined = ">=0.0.3"
 yarl = "*"
 

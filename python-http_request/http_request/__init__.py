@@ -143,10 +143,13 @@ def urlencode(
             yield "="
             if v is True:
                 yield "true"
+                continue
             elif v is False:
                 yield "false"
+                continue
             elif v is None:
                 yield "null"
+                continue
             elif isinstance(v, (str, UserString)):
                 pass
             elif isinstance(v, Buffer):

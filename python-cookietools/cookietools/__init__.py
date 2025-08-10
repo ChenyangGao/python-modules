@@ -2,21 +2,24 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 11)
 __all__ = [
     "create_cookie", "create_morsel", "to_cookie", "to_morsel", 
-    "cookie_to_morsel", "morsel_to_cookie", "cookies_str_to_dict", 
-    "cookies_dict_to_str", "extract_cookies", "update_cookies", 
+    "cookie_to_morsel", "morsel_to_cookie", "cookies_to_dict", 
+    "cookies_to_str", "extract_cookies", "update_cookies", 
     "iter_resp_cookies", 
 ]
 
 from calendar import timegm
-from collections.abc import Buffer, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Buffer, Callable, Container, Iterable, Iterator, Mapping, Sequence, 
+)
 from copy import copy
 from datetime import datetime
 from functools import partial
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel, SimpleCookie
+from posixpath import commonpath
 from re import compile as re_compile
 from time import gmtime, strftime, strptime, time
 from typing import cast, Any
@@ -66,12 +69,20 @@ def create_cookie(
         if isinstance(expires, datetime):
             kwargs["expires"] = expires.timestamp()
         elif isinstance(expires, str):
-            kwargs["expires"] = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+            try:
+                if len(expires) < 29:
+                    kwargs["expires"] = timegm(strptime(expires, "%a, %d-%b-%y %H:%M:%S GMT"))
+                else:
+                    kwargs["expires"] = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+            except ValueError:
+                pass
     elif max_age := kwargs.get("max-age"):
         try:
-            kwargs["expires"] = int(time()) + int(max_age)
+            max_age = int(max_age)
         except ValueError:
             raise TypeError(f"max-age: {max_age!r} must be integer")
+        if max_age >= 0:
+            kwargs["expires"] = int(time()) + max_age
     result: dict[str, Any] = {
         "version": 0, 
         "name": name, 
@@ -272,12 +283,20 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
         if isinstance(expires, datetime):
             expires = expires.timestamp()
         elif isinstance(expires, str):
-            expires = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+            try:
+                if len(expires) < 29:
+                    expires = timegm(strptime(expires, "%a, %d-%b-%y %H:%M:%S GMT"))
+                else:
+                    expires = timegm(strptime(expires, "%a, %d-%b-%Y %H:%M:%S GMT"))
+            except ValueError:
+                expires = None
     elif max_age := cookie.get("max-age"):
         try:
-            expires = int(time()) + int(max_age)
+            expires = int(max_age)
         except ValueError:
             raise TypeError(f"max-age: {max_age} must be integer")
+        if max_age >= 0:
+            expires = int(time()) + max_age
     return create_cookie(
         comment=cookie["comment"], 
         comment_url=bool(cookie["comment"]), 
@@ -296,25 +315,128 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
     )
 
 
-def cookies_str_to_dict(cookies: str, /) -> dict[str, str]:
-    return dict(cookie.split("=", 1) for cookie in CRE_COOKIE_SEP_split(cookies) if cookie)
-
-
-def cookies_dict_to_str(
-    cookies: CookieJar | SimpleCookie | Mapping[str, Any] | Iterable[Any], 
+def cookies_to_dict(
+    cookies: str | CookieJar | SimpleCookie | Mapping[str, Any] | Iterable[Any], 
     /, 
-) -> str:
-    if isinstance(cookies, CookieJar):
-        cookie_it: Iterator[tuple[str, None | str]] = ((cookie.name, cookie.value) for cookie in cookies)
+    predicate: None | str | Container[str] | Callable[[str, Any], bool] = None, 
+) -> dict[str, str]:
+    if isinstance(predicate, str):
+        from urllib.parse import urlsplit
+        urlp = urlsplit(predicate)
+        def predicate(_, cookie, /) -> bool:
+            if isinstance(cookie, str):
+                return True
+            if (domain := getattr(cookie, "domain", "")) and not urlp.netloc.endswith(domain):
+                return False
+            if (path := getattr(cookie, "path", "")) and commonpath((path, urlp.path or "/")) != path:
+                return False
+            return True
+    elif isinstance(predicate, Container):
+        contains = predicate.__contains__
+        def predicate(name, _, /) -> bool:
+            return contains(name)
+    if isinstance(cookies, str):
+        cookie_it = (cookie.split("=", 1) for cookie in CRE_COOKIE_SEP_split(cookies))
+        if predicate is not None:
+            return {name: val for name, val in cookie_it if predicate(name, val)}
+        return dict(cookie_it)
+    elif isinstance(cookies, CookieJar):
+        return {
+            cookie.name: val for cookie in cookies 
+            if (val:=cookie.value) is not None and (
+                predicate is None or
+                predicate(cookie.name, cookie)
+            )
+        }
     elif isinstance(cookies, SimpleCookie):
-        cookie_it = ((name, morsel.value) for name, morsel in cookies.items())
+        return {
+            name: morsel.value for name, morsel in cookies.items()
+            if predicate is None or predicate(name, morsel)
+        }
     elif isinstance(cookies, Mapping):
-        cookie_it = ((name, cookie if isinstance(cookie, str) else cookie.value) for name, cookie in iter_items(cookies))
+        return {
+            name: cookie if isinstance(cookie, str) else cookie.value 
+            for name, cookie in iter_items(cookies)
+            if predicate is None or predicate(name, cookie)
+        }
     else:
         cookie_it = (
-            cookie[:2] if isinstance(cookie, tuple) else 
-                ((cookie.key if isinstance(cookie, Morsel) else getattr(cookie, "name", "")), getattr(cookie, "value", None)) 
-            for cookie in cookies
+            cookie[:2] if isinstance(cookie, tuple) else ((
+                cookie.key if isinstance(cookie, Morsel) else getattr(cookie, "name", "")), 
+                cookie, 
+            ) for cookie in cookies
+        )
+        if predicate is not None:
+            cookie_it = ((name, cookie) for name, cookie in cookie_it if predicate(name, cookie))
+        return {
+            key: val for key, cookie in cookie_it 
+            if key and (val := (
+                cookie if isinstance(cookie, str) else getattr(cookie, "value", None))
+            ) is not None
+        }
+
+
+def cookies_to_str(
+    cookies: str | CookieJar | SimpleCookie | Mapping[str, Any] | Iterable[Any], 
+    /, 
+    predicate: None | str | Container[str] | Callable[[str, Any], bool] = None, 
+) -> str:
+    if isinstance(predicate, str):
+        from urllib.parse import urlsplit
+        urlp = urlsplit(predicate)
+        def predicate(_, cookie, /) -> bool:
+            if isinstance(cookie, str):
+                return True
+            if (domain := getattr(cookie, "domain", "")) and not urlp.netloc.endswith(domain):
+                return False
+            if (path := getattr(cookie, "path", "")) and commonpath((path, urlp.path or "/")) != path:
+                return False
+            return True
+    elif isinstance(predicate, Container):
+        contains = predicate.__contains__
+        def predicate(name, _, /) -> bool:
+            return contains(name)
+    if isinstance(cookies, str):
+        if predicate is None:
+            return cookies
+        cookie_it: Iterator[tuple[str, Any]] = (
+            tuple(cookie.split("=", 1)) 
+            for cookie in CRE_COOKIE_SEP_split(cookies)
+        )
+        if predicate is not None:
+            cookie_it = ((name, val) for name, val in cookie_it if predicate(name, val))
+    elif isinstance(cookies, CookieJar):
+        cookie_it = (
+            (cookie.name, cookie.value) for cookie in cookies
+            if predicate is None or predicate(cookie.name, cookie)
+        )
+    elif isinstance(cookies, SimpleCookie):
+        cookie_it = (
+            (name, morsel.value) for name, morsel in cookies.items()
+            if predicate is None or predicate(name, morsel)
+        )
+    elif isinstance(cookies, Mapping):
+        cookie_it = (
+            (name, cookie if isinstance(cookie, str) else cookie.value) 
+            for name, cookie in iter_items(cookies)
+            if predicate is None or predicate(name, cookie)
+        )
+    else:
+        cookie_it = (
+            cookie[:2] if isinstance(cookie, tuple) else ((
+                cookie.key if isinstance(cookie, Morsel) else getattr(cookie, "name", "")), 
+                cookie
+            ) for cookie in cookies
+        )
+        if predicate is not None:
+            cookie_it = (
+                (name, cookie)
+                for name, cookie in cookie_it
+                if predicate(name, cookie)
+            )
+        cookie_it = (
+            (name, cookie if isinstance(cookie, str) else getattr(cookie, "value", None)) 
+            for name, cookie in cookie_it
         )
     return "; ".join(f"{key}={val}" for key, val in cookie_it if key and val is not None)
 
@@ -421,4 +543,8 @@ def iter_resp_cookies(resp, /) -> Iterator[tuple[str, None | str]]:
                 cookies.load(v)
         for name, morsel in cookies.items():
             yield name, morsel.value
+
+
+cookies_str_to_dict = cookies_to_dict
+cookies_dict_to_str = cookies_to_str
 

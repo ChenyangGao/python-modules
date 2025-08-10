@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "headers_get", "get_filename", "get_mimetype", "get_charset", 
     "get_content_length", "get_length", "get_total_length", 
@@ -16,6 +16,7 @@ from posixpath import basename
 from re import compile as re_compile, IGNORECASE
 from typing import cast, Final
 from urllib.parse import parse_qsl, urlsplit, unquote
+from http.client import HTTPMessage
 
 from dicttools import get
 from orjson import loads
@@ -25,6 +26,8 @@ CRE_CONTENT_RANGE_fullmatch: Final = re_compile(r"bytes\s+(?:\*|(?P<begin>[0-9]+
 CRE_HDR_CD_FNAME_search: Final = re_compile("(?<=filename=\")[^\"]+|(?<=filename=')[^']+|(?<=filename=)[^'\"][^;]*").search
 CRE_HDR_CD_FNAME_STAR_search: Final = re_compile("(?<=filename\\*=)(?P<charset>[^']*)''(?P<name>[^;]+)").search
 CRE_CHARSET_search = re_compile(r"\bcharset\s*=(?P<charset>[^ ;]+)", IGNORECASE).search
+
+Mapping.register(HTTPMessage)
 
 
 def headers_get(response, /, key: bytes | str, default=None, parse=None):

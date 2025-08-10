@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
@@ -107,6 +107,7 @@ def urlopen(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     proxies: None | Mapping[str, str] | Iterable[tuple[str, str]] = None, 
@@ -129,6 +130,7 @@ def urlopen(
             params=params, 
             data=data, 
             json=json, 
+            files=files, 
             headers=headers, 
             ensure_ascii=True, 
         ))
@@ -183,6 +185,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -198,6 +201,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -213,6 +217,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -228,6 +233,7 @@ def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -242,6 +248,7 @@ def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -256,6 +263,7 @@ def request[T](
             params=params, 
             data=data, 
             json=json, 
+            files=files, 
             headers=headers, 
             follow_redirects=follow_redirects, 
             **request_kwargs, 

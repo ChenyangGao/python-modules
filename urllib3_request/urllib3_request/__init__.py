@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = ["request"]
 
 from collections import UserString
@@ -60,6 +60,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -78,6 +79,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -96,6 +98,7 @@ def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -114,6 +117,7 @@ def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -131,6 +135,7 @@ def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -169,6 +174,7 @@ def request[T](
             url=url, 
             params=params, 
             data=data, 
+            files=files, 
             json=json, 
             headers=headers, 
         )
@@ -233,14 +239,12 @@ def request[T](
                     if parse:
                         return parse_response(response, content)
                     return content
+                ac = argcount(parse)
+                if ac == 1:
+                    return cast(Callable[[HTTPResponse], T], parse)(response)
                 else:
-                    ac = argcount(parse)
-                    with response:
-                        if ac == 1:
-                            return cast(Callable[[HTTPResponse], T], parse)(response)
-                        else:
-                            return cast(Callable[[HTTPResponse, bytes], T], parse)(
-                                response, response.read())
+                    return cast(Callable[[HTTPResponse, bytes], T], parse)(
+                        response, response.read())
         dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
         if cookies_dict:
             headers_["cookie"] = cookies_dict_to_str(cookies_dict)

@@ -20,7 +20,7 @@ from typing import cast, overload, Any, Final, Literal
 from argtools import argcount
 from cookietools import update_cookies
 from dicttools import get_all_items
-from filewrap import bio_chunk_async_iter, SupportsRead
+from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
 from httpx import (
@@ -33,8 +33,8 @@ from yarl import URL
 
 type string = Buffer | str | UserString
 
+_INIT_CLIENT_KWARGS: Final   = signature(Client).parameters.keys()
 _BUILD_REQUEST_KWARGS: Final = signature(Client.build_request).parameters.keys() - {"self"}
-_INIT_CLIENT_KWARGS: Final   = signature(Client).parameters.keys() - _BUILD_REQUEST_KWARGS
 _SEND_REQUEST_KWARGS: Final  = ("auth", "stream", "follow_redirects")
 
 if "__del__" not in Client.__dict__:
@@ -48,22 +48,25 @@ if "__del__" not in AsyncClient.__dict__:
     setattr(AsyncClient, "__del__", getattr(AsyncClient, "close"))
 if "__del__" not in Response.__dict__:
     def __del__(self, /):
-        from httpx import SyncByteStream
-        if self.is_closed:
+        stream = self.stream
+        if self.is_closed or not stream:
             return
-        if isinstance(self.stream, SyncByteStream):
+        from httpx import AsyncByteStream, SyncByteStream
+        if isinstance(stream, SyncByteStream):
             self.close()
-        else:
+        elif isinstance(stream, AsyncByteStream):
             from asynctools import run_async
             return run_async(self.aclose())
     setattr(Response, "__del__", __del__)
 
 _DEFAULT_CLIENT = Client(
+    http2=True, 
     limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
     transport=HTTPTransport(retries=5), 
     verify=False, 
 )
 _DEFAULT_ASYNC_CLIENT = AsyncClient(
+    http2=True, 
     limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
     transport=AsyncHTTPTransport(retries=5), 
     verify=False, 
@@ -169,9 +172,9 @@ def request_sync[T](
         request = url
     else:
         if isinstance(data, PathLike):
-            data = bio_chunk_async_iter(open(data, "rb"))
+            data = bio_chunk_iter(open(data, "rb"))
         elif isinstance(data, SupportsRead):
-            data = bio_chunk_async_iter(data)
+            data = bio_chunk_iter(data)
         request_kwargs.update(normalize_request_args(
             method=method, 
             url=url, 

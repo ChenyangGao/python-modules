@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "urllib3_request"
-version = "0.1.3"
-description = "urllib3 request extension."
+name = "asks_request"
+version = "0.0.1.1"
+description = "asks request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/urllib3_request"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/urllib3_request"
-keywords = ["urllib3", "request"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/asks_request"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/asks_request"
+keywords = ["asks", "request"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -29,11 +29,11 @@ include = [
 python = "^3.12"
 http_response = ">=0.0.6"
 python-argtools = ">=0.0.2"
-python-cookietools = ">=0.0.8"
+python-cookietools = ">=0.0.10"
 python-dicttools = ">=0.0.2"
 python-filewrap = ">=0.2.8"
 python-http_request = ">=0.1.0"
-urllib3 = "*"
+asks = "*"
 yarl = "*"
 
 [build-system]
@@ -41,4 +41,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "urllib3_request"
+include = "asks_request"

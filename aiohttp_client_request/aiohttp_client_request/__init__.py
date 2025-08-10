@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 1)
 __all__ = ["request"]
 
 from asyncio import get_running_loop, run, run_coroutine_threadsafe
@@ -74,6 +74,7 @@ async def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -91,6 +92,7 @@ async def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -108,6 +110,7 @@ async def request(
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -125,6 +128,7 @@ async def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -141,6 +145,7 @@ async def request[T](
     params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
@@ -171,6 +176,7 @@ async def request[T](
         url=url, 
         params=params, 
         data=data, 
+        files=files, 
         json=json, 
         headers=headers, 
     ))

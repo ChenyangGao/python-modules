@@ -337,9 +337,13 @@ def extract_cookies[T: (SimpleCookie, CookieJar)](
     else:
         headers = response
     if isinstance(cookies, SimpleCookie):
-        cookiejar = CookieJar()
-        cookiejar.extract_cookies(response, Request(url)) # type: ignore
-        cookies.update((cookie.name, cookie_to_morsel(cookie)) for cookie in cookiejar)
+        for key, val in iter_items(headers):
+            key = key.lower()
+            if key in (b"set-cookie", b"set-cookie2"):
+                val = str(val, "latin-1")
+            elif key not in ("set-cookie", "set-cookie2"):
+                continue
+            cookies.load(val)
     else:
         cookies.extract_cookies(response, Request(url)) # type: ignore
     return cookies
@@ -354,9 +358,9 @@ def update_cookies[T: (SimpleCookie, CookieJar)](
         if isinstance(cookies2, SimpleCookie):
             morsels: Iterable[tuple[str, Morsel]] = cookies2.items()
         elif isinstance(cookies2, CookieJar):
-            morsels = ((cookie.name, to_morsel(cookie)) for cookie in cookies2)
+            morsels = ((cookie.name, to_morsel(cookie, name=cookie.name)) for cookie in cookies2)
         elif isinstance(cookies2, Mapping):
-            morsels = ((k, v if isinstance(v, Morsel) else to_morsel(v)) for k, v in iter_items(cookies2))
+            morsels = ((k, v if isinstance(v, Morsel) else to_morsel(v, name=k)) for k, v in iter_items(cookies2))
         else:
             morsels = ((c.key, c) for c in (c if isinstance(c, Morsel) else to_morsel(c) for c in cookies2))
         cookies1.update(morsels)
@@ -408,12 +412,12 @@ def iter_resp_cookies(resp, /) -> Iterator[tuple[str, None | str]]:
             return
         cookies = SimpleCookie()
         for k, v in iter_items(headers):
+            k = k.lower()
             if isinstance(k, Buffer):
                 k = str(k, "utf-8")
             if isinstance(v, Buffer):
                 v = str(v, "utf-8")
-            k = k.lower()
-            if k == "set-cookie":
+            if k == "set-cookie" or k == "set-cookie2":
                 cookies.load(v)
         for name, morsel in cookies.items():
             yield name, morsel.value

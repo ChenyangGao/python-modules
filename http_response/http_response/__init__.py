@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "headers_get", "get_filename", "get_mimetype", "get_charset", 
     "get_content_length", "get_length", "get_total_length", 
@@ -29,7 +29,7 @@ CRE_CHARSET_search = re_compile(r"\bcharset\s*=(?P<charset>[^ ;]+)", IGNORECASE)
 
 def headers_get(response, /, key: bytes | str, default=None, parse=None):
     if hasattr(response, "getheaders"):
-        headers = response.getheaders
+        headers = response.getheaders()
     elif hasattr(response, "headers"):
         headers = response.headers
     else:
@@ -37,13 +37,19 @@ def headers_get(response, /, key: bytes | str, default=None, parse=None):
     headers = cast(Mapping | Iterable[tuple[bytes|str, bytes|str]], headers)
     key2: bytes | str
     if isinstance(headers, Mapping):
-        val = get(headers, key, default=None)
+        try:
+            val = get(headers, key, default=None)
+        except Exception:
+            val = None
         if val is None:
             if isinstance(key, str):
                 key2 = bytes(key, "latin-1")
             else:
                 key2 = str(key, "latin-1")
-            val = get(headers, key2, default=None)
+            try:
+                val = get(headers, key2, default=None)
+            except Exception:
+                val = None
             if val is None:
                 return default
     else:

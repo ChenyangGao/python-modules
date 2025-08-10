@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10)
+__version__ = (0, 1, 0)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -25,7 +25,10 @@ from os import PathLike
 from os.path import basename
 from re import compile as re_compile, Pattern
 from string import punctuation
-from typing import runtime_checkable, Any, Final, Protocol, TypedDict
+from typing import (
+    cast, overload, runtime_checkable, Any, Final, Literal, Protocol, 
+    TypedDict, 
+)
 from urllib.parse import quote, urlparse, urlunparse
 from uuid import uuid4
 from yarl import URL
@@ -181,12 +184,37 @@ def headers_str_to_dict_by_lines(headers: str, /, ) -> dict[str, str]:
     return dict(batched(lines, 2)) # type: ignore
 
 
+@overload
 def encode_multipart_data(
-    data: None | Mapping[Buffer | str, Any] = None, 
-    files: None | Mapping[Buffer | str, Any] = None, 
+    data: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
+    *, 
+    async_: Literal[False] = False, 
 ) -> tuple[dict, Iterator[Buffer]]:
+    ...
+@overload
+def encode_multipart_data(
+    data: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    boundary: None | str = None, 
+    file_suffix: str = "", 
+    *, 
+    async_: Literal[True], 
+) -> tuple[dict, AsyncIterator[Buffer]]:
+    ...
+def encode_multipart_data(
+    data: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    boundary: None | str = None, 
+    file_suffix: str = "", 
+    *, 
+    async_: bool = False, 
+) -> tuple[dict, Iterator[Buffer]] | tuple[dict, AsyncIterator[Buffer]]:
+    if async_:
+        return encode_multipart_data_async(data, files, boundary)
+
     if not boundary:
         boundary = uuid4().hex
         boundary_bytes = bytes(boundary, "ascii")
@@ -273,8 +301,8 @@ def encode_multipart_data(
 
 
 def encode_multipart_data_async(
-    data: None | Mapping[Buffer | str, Any] = None, 
-    files: None | Mapping[Buffer | str, Any] = None, 
+    data: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
 ) -> tuple[dict, AsyncIterator[Buffer]]:
@@ -395,8 +423,11 @@ def normalize_request_args(
     params: Any = None, 
     data: Any = None, 
     json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     ensure_ascii: bool = False, 
+    *, 
+    async_: bool = False, 
 ) -> RequestArgs:
     method = ensure_str(method).upper()
     if isinstance(url, SupportsGeturl):
@@ -419,7 +450,14 @@ def normalize_request_args(
     content_type = headers_.get("content-type", "")
     charset      = get_charset(content_type)
     mimetype     = get_mimetype(charset).lower()
-    if data is not None:
+    if files is not None:
+        headers2, data = encode_multipart_data(
+            cast(None | Mapping[string, Any] | Iterable[tuple[string, Any]], data), 
+            files, 
+            async_=async_, # type: ignore
+        )
+        headers_.update(headers2)
+    elif data is not None:
         if isinstance(data, Buffer):
             pass
         elif isinstance(data, (str, UserString)):
@@ -427,7 +465,10 @@ def normalize_request_args(
         elif isinstance(data, AsyncIterable):
             data = async_map(ensure_buffer, data)
         elif isinstance(data, Iterator):
-            data = map(ensure_buffer, data)
+            if async_:
+                data = async_map(ensure_buffer, data)
+            else:
+                data = map(ensure_buffer, data)
         elif mimetype == "application/json":
             if charset == "utf-8":
                 data = json_dumps(data, default=json_default)
@@ -444,13 +485,18 @@ def normalize_request_args(
     elif json is not None:
         if isinstance(json, Buffer):
             data = json
-        elif isinstance(data, AsyncIterable):
-            data = async_map(ensure_buffer, data)
-        if charset == "utf-8":
-            data = json_dumps(data, default=json_default)
+        elif isinstance(json, AsyncIterable):
+            data = async_map(ensure_buffer, json)
+        elif isinstance(json, Iterator):
+            if async_:
+                data = async_map(ensure_buffer, json)
+            else:
+                data = map(ensure_buffer, json)
+        elif charset == "utf-8":
+            data = json_dumps(json, default=json_default)
         else:
             from json import dumps
-            data = dumps(data, default=json_default).encode(charset)
+            data = dumps(json, default=json_default).encode(charset)
         if mimetype != "application/json":
             headers_["content-type"] = "application/json; charset=" + charset
     elif mimetype == "application/json":

@@ -12,14 +12,12 @@ from collections.abc import (
     AsyncGenerator, AsyncIterable, Awaitable, Buffer, Callable, 
     Iterable, Mapping, 
 )
-from gzip import decompress as decompress_gzip
 from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from inspect import isawaitable
 from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Literal
-from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
 from blacksheep.client.session import ClientSession
@@ -32,7 +30,7 @@ from cookietools import update_cookies
 from ensure import ensure_buffer
 from filewrap import bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import parse_response
+from http_response import decompress_response, parse_response
 from multidict import CIMultiDict
 from yarl import URL
 from undefined import undefined, Undefined
@@ -41,7 +39,6 @@ from undefined import undefined, Undefined
 type string = Buffer | str | UserString
 
 _DEFAULT_SESSION: ClientSession
-#COOKIE_ATTRS =signature(Cookie).parameters.keys()
 
 
 def _get_default_session() -> ClientSession:
@@ -61,45 +58,6 @@ if "__del__" not in ClientSession.__dict__:
         except:
             pass
     setattr(ClientSession, "__del__", close)
-
-
-def decompress_deflate(data: bytes, compresslevel: int = 9) -> bytes:
-    # Fork from: https://stackoverflow.com/questions/1089662/python-inflate-and-deflate-implementations#answer-1089787
-    compress = compressobj(
-            compresslevel,  # level: 0-9
-            DEFLATED,       # method: must be DEFLATED
-            -MAX_WBITS,     # window size in bits:
-                            #   -15..-8: negate, suppress header
-                            #   8..15: normal
-                            #   16..30: subtract 16, gzip header
-            DEF_MEM_LEVEL,  # mem level: 1..8/9
-            0               # strategy:
-                            #   0 = Z_DEFAULT_STRATEGY
-                            #   1 = Z_FILTERED
-                            #   2 = Z_HUFFMAN_ONLY
-                            #   3 = Z_RLE
-                            #   4 = Z_FIXED
-    )
-    deflated = compress.compress(data)
-    deflated += compress.flush()
-    return deflated
-
-
-async def decompress_response(response: ResponseWrapper, /) -> bytes:
-    data = await response.read()
-    content_encoding = response.headers.get("Content-Encoding")
-    match content_encoding:
-        case "gzip":
-            data = decompress_gzip(data)
-        case "deflate":
-            data = decompress_deflate(data)
-        case "br":
-            from brotli import decompress as decompress_br # type: ignore
-            data = decompress_br(data)
-        case "zstd":
-            from zstandard import decompress as decompress_zstd
-            data = decompress_zstd(data)
-    return data
 
 
 class ResponseWrapper:
@@ -240,6 +198,7 @@ async def request[T](
                 files=files, 
                 json=json, 
                 headers=headers, 
+                async_=True, 
             )
         headers_ = request_args["headers"] or {}
         request = Request(
@@ -309,7 +268,7 @@ async def request[T](
         if parse is None or parse is ...:
             return response
         elif isinstance(parse, bool):
-            data = await decompress_response(response)
+            data = decompress_response(await response.read(), response)
             if parse:
                 return parse_response(response, data)
             return data
@@ -317,8 +276,8 @@ async def request[T](
         if ac == 1:
             ret = cast(Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], parse)(response)
         else:
-            ret = cast(Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]], parse)(
-                response, await decompress_response(response))
+            data = decompress_response(await response.read(), response)
+            ret = cast(Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]], parse)(response, data)
         if isawaitable(ret):
             ret = await ret
         return ret

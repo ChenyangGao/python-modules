@@ -28,7 +28,6 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.12"
 blacksheep = "*"
-brotli = "*"
 http_response = ">=0.0.6"
 multidict = "*"
 python-argtools = ">=0.0.2"
@@ -39,7 +38,6 @@ python-ensure = ">=0.0.1"
 python-filewrap = ">=0.2.8"
 python-http_request = ">=0.1.0"
 python-undefined = ">=0.0.3"
-zstandard = "*"
 
 [build-system]
 requires = ["poetry-core"]

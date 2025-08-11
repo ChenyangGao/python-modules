@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "ResponseWrapper", "HTTPStatusError", "request", 
     "request_sync", "request_async", 
@@ -29,7 +31,7 @@ from cookietools import cookies_to_str
 from dicttools import get_all_items
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import parse_response
+from http_response import decompress_response, parse_response
 from httpcore import AsyncConnectionPool, ConnectionPool, Request, Response
 from httpcore._models import (
     enforce_bytes, enforce_headers, enforce_stream, enforce_url, 
@@ -64,8 +66,8 @@ if "__del__" not in AsyncConnectionPool.__dict__:
     #             return run_async(self.aclose())
     # setattr(Response, "__del__", __del__)
 
-_DEFAULT_CLIENT = ConnectionPool(http2=True)
-_DEFAULT_ASYNC_CLIENT = AsyncConnectionPool(http2=True)
+_DEFAULT_CLIENT = ConnectionPool(http2=True, max_connections=128)
+_DEFAULT_ASYNC_CLIENT = AsyncConnectionPool(http2=True, max_connections=128)
 _DEFAULT_COOKIE_JAR = CookieJar()
 setattr(_DEFAULT_CLIENT, "cookies", _DEFAULT_COOKIE_JAR)
 setattr(_DEFAULT_ASYNC_CLIENT, "cookies", _DEFAULT_COOKIE_JAR)
@@ -296,7 +298,7 @@ def request_sync[T](
             return response
         with closing(response):
             if isinstance(parse, bool):
-                content = response.read()
+                content = decompress_response(response.read(), response)
                 if parse:
                     return parse_response(response, content)
                 return content
@@ -304,7 +306,8 @@ def request_sync[T](
             if ac == 1:
                 return cast(Callable[[ResponseWrapper], T], parse)(response)
             else:
-                return cast(Callable[[ResponseWrapper, bytes], T], parse)(response, response.read())
+                content = decompress_response(response.read(), response)
+                return cast(Callable[[ResponseWrapper, bytes], T], parse)(response, content)
 
 
 @overload
@@ -416,6 +419,7 @@ async def request_async[T](
             files=files, 
             json=json, 
             headers=headers, 
+            async_=True, 
         )
         data = request_args["data"]
         if isinstance(data, Buffer):
@@ -478,7 +482,7 @@ async def request_async[T](
             return response
         async with aclosing(response):
             if isinstance(parse, bool):
-                content = await response.aread()
+                content = decompress_response(await response.aread(), response)
                 if parse:
                     return parse_response(response, content)
                 return content
@@ -486,7 +490,8 @@ async def request_async[T](
             if ac == 1:
                 ret = cast(Callable[[ResponseWrapper], T], parse)(response)
             else:
-                ret = cast(Callable[[ResponseWrapper, bytes], T], parse)(response, await response.aread())
+                content = decompress_response(await response.aread(), response)
+                ret = cast(Callable[[ResponseWrapper, bytes], T], parse)(response, content)
             if isawaitable(ret):
                 ret = await ret
             return ret

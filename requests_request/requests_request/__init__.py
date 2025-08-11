@@ -167,7 +167,7 @@ def request[T](
         request = Request(**dict(get_all_items(
             request_kwargs, *_BUILD_REQUEST_KWARGS)))
     prep = session.prepare_request(request)
-    request_kwargs.setdefault("proxies", None)
+    request_kwargs.setdefault("proxies", {})
     request_kwargs.setdefault("verify", session.verify)
     request_kwargs.setdefault("cert", session.cert)
     request_kwargs.update(session.merge_environment_settings(

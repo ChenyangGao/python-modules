@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["request"]
 
 from collections import UserString
@@ -43,7 +43,31 @@ if "__del__" not in Session.__dict__:
 if "__del__" not in StreamBody.__dict__:
     setattr(StreamBody, "__del__", __del__)
 
-_DEFAULT_SESSION = Session(connections=64)
+def bugfix():
+    import h11
+
+    from asks.http_utils import decompress, parse_content_encoding # type: ignore
+    from asks.response_objects import decompress, StreamBody
+
+    async def __aiter__(self):
+        if self.content_encoding is not None:
+            decompressor = decompress(parse_content_encoding(self.content_encoding))
+        while True:
+            event = await self._recv_event()
+            if isinstance(event, h11.Data):
+                data = event.data
+                if self.content_encoding is not None:
+                    if self.decompress_data:
+                        data = decompressor.send(data)
+                yield data
+            elif isinstance(event, h11.EndOfMessage):
+                break
+
+    StreamBody.__aiter__ = __aiter__
+
+bugfix()
+
+_DEFAULT_SESSION = Session(connections=128)
 
 
 @overload
@@ -155,6 +179,7 @@ async def request[T](
         json=json, 
         files=files, 
         headers=headers, 
+        async_=True, 
     ))
     if cookies is not None:
         request_kwargs["cookies"] = cookies_to_dict(cookies, predicate=request_kwargs["url"])
@@ -174,7 +199,12 @@ async def request[T](
         return response
     async with ensure_acm(response.body):
         if isinstance(parse, bool):
-            content = response.content
+            content = response.body
+            if not isinstance(content, Buffer):
+                async with content as chunks:
+                    content = bytearray()
+                    async for chunk in chunks:
+                        content += chunk
             if parse:
                 return parse_response(response, content)
             return content
@@ -182,8 +212,14 @@ async def request[T](
         if ac == 1:
             ret = cast(Callable[[BaseResponse], T], parse)(response)
         else:
+            content = response.body
+            if not isinstance(content, Buffer):
+                async with content as chunks:
+                    content = bytearray()
+                    async for chunk in chunks:
+                        content += chunk
             ret = cast(Callable[[BaseResponse, bytes], T], parse)(
-                response, response.content)
+                response, content)
         if isawaitable(ret):
             ret = await ret
         return ret

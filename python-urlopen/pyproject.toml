@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-urlopen"
-version = "0.1.2"
+version = "0.1.3"
 description = "Python urlopen wrapper."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,6 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-brotli = "*"
 http_response = ">=0.0.6"
 python-argtools = ">=0.0.2"
 python-cookietools = ">=0.0.8"
@@ -36,7 +35,6 @@ python-filewrap = ">=0.2.8"
 python-http_request = ">=0.1.0"
 python-undefined = ">=0.0.3"
 yarl = "*"
-zstandard = "*"
 
 [tool.poetry.scripts]
 python-urlopen = "urlopen.__main__:main"

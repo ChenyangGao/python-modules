@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = ["urlopen", "request", "download"]
 
 import errno
@@ -10,7 +10,6 @@ import errno
 from collections import UserString
 from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
 from copy import copy
-from gzip import decompress as decompress_gzip
 from http.client import HTTPResponse
 from http.cookiejar import CookieJar
 from inspect import isgenerator
@@ -26,7 +25,6 @@ from urllib.request import (
     build_opener, BaseHandler, HTTPCookieProcessor, HTTPSHandler, 
     HTTPRedirectHandler, OpenerDirector, Request, 
 )
-from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
 
 from argtools import argcount
 from cookietools import cookies_dict_to_str
@@ -34,7 +32,7 @@ from dicttools import iter_items
 from filewrap import bio_skip_iter, bio_chunk_iter, SupportsRead, SupportsWrite
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import (
-    get_filename, get_length, is_chunked, is_range_request, 
+    decompress_response, get_filename, get_length, is_chunked, is_range_request, 
     parse_response, 
 )
 from yarl import URL
@@ -60,45 +58,6 @@ if getdefaulttimeout() is None:
 class NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, /, *args, **kwds):
         return None
-
-
-def decompress_deflate(data: bytes, compresslevel: int = 9) -> bytes:
-    # Fork from: https://stackoverflow.com/questions/1089662/python-inflate-and-deflate-implementations#answer-1089787
-    compress = compressobj(
-            compresslevel,  # level: 0-9
-            DEFLATED,       # method: must be DEFLATED
-            -MAX_WBITS,     # window size in bits:
-                            #   -15..-8: negate, suppress header
-                            #   8..15: normal
-                            #   16..30: subtract 16, gzip header
-            DEF_MEM_LEVEL,  # mem level: 1..8/9
-            0               # strategy:
-                            #   0 = Z_DEFAULT_STRATEGY
-                            #   1 = Z_FILTERED
-                            #   2 = Z_HUFFMAN_ONLY
-                            #   3 = Z_RLE
-                            #   4 = Z_FIXED
-    )
-    deflated = compress.compress(data)
-    deflated += compress.flush()
-    return deflated
-
-
-def decompress_response(response: HTTPResponse, /) -> bytes:
-    data = response.read()
-    content_encoding = response.headers.get("content-encoding")
-    match content_encoding:
-        case "gzip":
-            data = decompress_gzip(data)
-        case "deflate":
-            data = decompress_deflate(data)
-        case "br":
-            from brotli import decompress as decompress_br # type: ignore
-            data = decompress_br(data)
-        case "zstd":
-            from zstandard import decompress as decompress_zstd
-            data = decompress_zstd(data)
-    return data
 
 
 def urlopen(
@@ -279,7 +238,7 @@ def request[T](
         return response
     with response:
         if isinstance(parse, bool):
-            data = decompress_response(response)
+            data = decompress_response(response.read(), response)
             if parse:
                 return parse_response(response, data)
             return data
@@ -287,8 +246,8 @@ def request[T](
         if ac == 1:
             return cast(Callable[[HTTPResponse], T], parse)(response)
         else:
-            return cast(Callable[[HTTPResponse, bytes], T], parse)(
-                response, decompress_response(response))
+            data = decompress_response(response.read(), response)
+            return cast(Callable[[HTTPResponse, bytes], T], parse)(response, data)
 
 
 def download(

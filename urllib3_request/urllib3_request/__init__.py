@@ -226,31 +226,31 @@ def request[T](
                 response.headers, # type: ignore
                 cast(IO[bytes], response), 
             )
-        redirect_location = follow_redirects and response.get_redirect_location()
-        if not redirect_location:
-            if parse is None:
-                return response
-            elif parse is ...:
-                response.close()
-                return response
-            with response:
-                if isinstance(parse, bool):
-                    content = response.read()
-                    if parse:
-                        return parse_response(response, content)
-                    return content
-                ac = argcount(parse)
-                if ac == 1:
-                    return cast(Callable[[HTTPResponse], T], parse)(response)
-                else:
-                    return cast(Callable[[HTTPResponse, bytes], T], parse)(
-                        response, response.read())
-        dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
-        if cookies_dict:
-            headers_["cookie"] = cookies_dict_to_str(cookies_dict)
-        url = urljoin(url, redirect_location)
-        if response.status == 303:
-            method = "GET"
-            body = None
-        response.drain_conn()
+        if redirect_location := follow_redirects and response.get_redirect_location():
+            dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
+            if cookies_dict:
+                headers_["cookie"] = cookies_dict_to_str(cookies_dict)
+            url = urljoin(url, redirect_location)
+            if response.status == 303:
+                method = "GET"
+                body = None
+            response.drain_conn()
+            continue
+        if parse is None:
+            return response
+        elif parse is ...:
+            response.close()
+            return response
+        with response:
+            if isinstance(parse, bool):
+                content = response.read()
+                if parse:
+                    return parse_response(response, content)
+                return content
+            ac = argcount(parse)
+            if ac == 1:
+                return cast(Callable[[HTTPResponse], T], parse)(response)
+            else:
+                return cast(Callable[[HTTPResponse, bytes], T], parse)(
+                    response, response.read())
 

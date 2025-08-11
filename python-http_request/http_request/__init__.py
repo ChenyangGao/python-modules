@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -124,6 +124,7 @@ def urlencode(
     /, 
     encoding: str = "utf-8", 
     errors: str = "strict", 
+    ensure_ascii: bool = True, 
 ) -> str:
     if isinstance(payload, str):
         return payload
@@ -139,7 +140,10 @@ def urlencode(
                 k = str(k, encoding, errors)
             else:
                 k = str(k)
-            yield k.translate(QUERY_KEY_TRANSTAB)
+            if ensure_ascii:
+                yield quote(k)
+            else:
+                yield k.translate(QUERY_KEY_TRANSTAB)
             yield "="
             if v is True:
                 yield "true"
@@ -158,7 +162,10 @@ def urlencode(
                 v = json_dumps(v, default=json_default).decode("utf-8")
             else:
                 v = str(v)
-            yield v.replace("&", "%26")
+            if ensure_ascii:
+                yield quote(v)
+            else:
+                yield v.replace("&", "%26")
     return "".join(encode_iter(iter_items(payload)))
 
 
@@ -424,7 +431,7 @@ def normalize_request_args(
     json: Any = None, 
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
-    ensure_ascii: bool = False, 
+    ensure_ascii: bool = True, 
     *, 
     async_: bool = False, 
 ) -> RequestArgs:
@@ -434,7 +441,7 @@ def normalize_request_args(
     elif isinstance(url, URL):
         url = str(url)
     url = complete_url(ensure_str(url))
-    if params and (params := urlencode(params)):
+    if params and (params := urlencode(params, ensure_ascii=ensure_ascii)):
         urlp = urlparse(url)
         if query := urlp.query:
             params = query + "&" + params
@@ -476,7 +483,7 @@ def normalize_request_args(
                 data = dumps(data, default=json_default).encode(charset)
         elif isinstance(data, (Mapping, Sequence)):
             if data:
-                data = urlencode(data, charset).encode(charset)
+                data = urlencode(data, charset, ensure_ascii=ensure_ascii).encode(charset)
                 if mimetype != "application/x-www-form-urlencoded":
                     headers_["content-type"] = "application/x-www-form-urlencoded"
         else:

@@ -2,11 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
+__version__ = (0, 0, 8)
 __all__ = [
     "headers_get", "get_filename", "get_mimetype", "get_charset", 
     "get_content_length", "get_length", "get_total_length", 
     "get_range", "is_chunked", "is_range_request", "parse_response", 
+    "decompress_response", 
 ]
 
 from codecs import lookup
@@ -189,4 +190,53 @@ def parse_response(
     elif content_type.startswith("text/"):
         return content.decode(charset)
     return content
+
+
+def decompress_deflate(data: bytes, compresslevel: int = 9) -> bytes:
+    # Fork from: https://stackoverflow.com/questions/1089662/python-inflate-and-deflate-implementations#answer-1089787
+    from zlib import compressobj, DEF_MEM_LEVEL, DEFLATED, MAX_WBITS
+    compress = compressobj(
+            compresslevel,  # level: 0-9
+            DEFLATED,       # method: must be DEFLATED
+            -MAX_WBITS,     # window size in bits:
+                            #   -15..-8: negate, suppress header
+                            #   8..15: normal
+                            #   16..30: subtract 16, gzip header
+            DEF_MEM_LEVEL,  # mem level: 1..8/9
+            0               # strategy:
+                            #   0 = Z_DEFAULT_STRATEGY
+                            #   1 = Z_FILTERED
+                            #   2 = Z_HUFFMAN_ONLY
+                            #   3 = Z_RLE
+                            #   4 = Z_FIXED
+    )
+    deflated = compress.compress(data)
+    deflated += compress.flush()
+    return deflated
+
+
+def decompress_response(
+    data: bytes, 
+    /, 
+    content_encoding = None, 
+) -> bytes:
+    if content_encoding and not isinstance(content_encoding, (bytes, str)):
+        content_encoding = headers_get(content_encoding, "content-encoding")
+    if not content_encoding:
+        return data
+    elif not isinstance(content_encoding, str):
+        content_encoding = str(content_encoding, "latin-1")
+    match content_encoding:
+        case "gzip":
+            from gzip import decompress as decompress_gzip
+            return decompress_gzip(data)
+        case "deflate":
+            return decompress_deflate(data)
+        case "br":
+            from brotli import decompress as decompress_br # type: ignore
+            return decompress_br(data)
+        case "zstd":
+            from zstandard import decompress as decompress_zstd
+            return decompress_zstd(data)
+    return data
 

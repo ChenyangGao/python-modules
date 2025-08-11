@@ -179,6 +179,7 @@ async def request[T](
         files=files, 
         json=json, 
         headers=headers, 
+        async_=True, 
     ))
     request_kwargs["str_or_url"] = request_kwargs["url"]
     if cookies is not None:

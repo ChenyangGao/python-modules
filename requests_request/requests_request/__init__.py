@@ -7,6 +7,7 @@ __all__ = ["request"]
 
 from collections import UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
+from contextlib import closing
 from copy import copy
 from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
@@ -16,7 +17,7 @@ from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 
 from argtools import argcount
-from cookietools import update_cookies
+from cookietools import extract_cookies, update_cookies
 from dicttools import get_all_items
 from filewrap import bio_chunk_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
@@ -175,8 +176,17 @@ def request[T](
     response = session.send(
         prep, **dict(get_all_items(request_kwargs, *_SEND_REQUEST_KWARGS)))
     setattr(response, "session", session)
-    if cookies is not None and response.cookies:
-        update_cookies(cookies, response.cookies) # type: ignore
+    if cookies is not None:
+        try:
+            if response.cookies:
+                update_cookies(cookies, response.cookies) # type: ignore
+        except TypeError:
+            from http.client import HTTPMessage
+            response_headers = HTTPMessage()
+            for key, val in response.headers.items():
+                response_headers.set_raw(key, val)
+            setattr(response, "info", lambda: response_headers)
+            extract_cookies(cookies, response.url, response)
     if raise_for_status:
         response.raise_for_status()
     if parse is None:
@@ -184,7 +194,7 @@ def request[T](
     elif parse is ...:
         response.close()
         return response
-    with response:
+    with closing(response):
         if isinstance(parse, bool):
             content = response.content
             if parse:

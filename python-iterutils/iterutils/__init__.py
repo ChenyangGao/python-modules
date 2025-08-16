@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 7)
+__version__ = (0, 2, 8)
 __all__ = [
     "Yield", "YieldFrom", "GenStep", "GenStepIter", "iterable", 
     "async_iterable", "run_gen_step", "run_gen_step_iter", 
@@ -211,16 +211,17 @@ def _run_gen_step_iter(
                 val_type = type(value)
                 if issubclass(val_type, (Yield, YieldFrom)):
                     value = value.value
-                elif isinstance(value, GenStepIter):
+                if isinstance(value, GenStepIter):
                     yield from _run_gen_step_iter(value.value, value.max_depth)
-                elif isinstance(value, GenStep):
-                    value = _run_gen_step(value.value, value.max_depth)
-                elif drive_generator and isinstance(value, Generator):
-                    value = _run_gen_step(value, dgen)
-                if val_type is Yield:
-                    yield value
-                elif val_type is YieldFrom:
-                    yield from value
+                else:
+                    if isinstance(value, GenStep):
+                        value = _run_gen_step(value.value, value.max_depth)
+                    elif drive_generator and isinstance(value, Generator):
+                        value = _run_gen_step(value, dgen)
+                    if val_type is Yield:
+                        yield value
+                    elif val_type is YieldFrom:
+                        yield from value
             except BaseException as e:
                 value = throw(e)
             else:
@@ -288,22 +289,23 @@ async def _run_gen_step_async_iter(
             value = value.value
         if isawaitable(value):
             value = await value
-        elif isinstance(value, GenStepIter):
+        if isinstance(value, GenStepIter):
             async for el in _run_gen_step_async_iter(value.value, value.max_depth):
                 yield el
-        elif isinstance(value, GenStep):
-            value = await _run_gen_step_async(value.value, value.max_depth)
-        elif drive_generator and isinstance(value, Generator):
-            value = await _run_gen_step_async(value, dgen)
-        if val_type is Yield:
-            yield value
-        elif val_type is YieldFrom:
-            if isinstance(value, AsyncIterable):
-                async for el in value:
-                    yield el
-            else:
-                for el in value:
-                    yield el
+        else:
+            if isinstance(value, GenStep):
+                value = await _run_gen_step_async(value.value, value.max_depth)
+            elif drive_generator and isinstance(value, Generator):
+                value = await _run_gen_step_async(value, dgen)
+            if val_type is Yield:
+                yield value
+            elif val_type is YieldFrom:
+                if isinstance(value, AsyncIterable):
+                    async for el in value:
+                        yield el
+                else:
+                    for el in value:
+                        yield el
     finally:
         gen.close()
 

@@ -45,7 +45,7 @@ class VirtualBufferedReader:
 
 @runtime_checkable
 class SupportsRead[T](Protocol):
-    def read(self, /, size: int) -> T: ...
+    def read(self, /, size: int = -1) -> T: ...
 
 
 @runtime_checkable

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -51,7 +51,7 @@ CRE_URL_SCHEME_match: Final = re_compile(r"(?i:[a-z][a-z0-9.+-]*)://").match
 class RequestArgs(TypedDict):
     method: str
     url: str
-    data: Buffer | Iterable[Buffer] | AsyncIterable[Buffer]
+    data: None | Buffer | Iterable[Buffer] | AsyncIterable[Buffer]
     headers: dict[str, str]
 
 

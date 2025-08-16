@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "http_client_request"
-version = "0.0.3"
+version = "0.0.4"
 description = "http.client request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

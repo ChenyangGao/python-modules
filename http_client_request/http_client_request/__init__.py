@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = ["ConnectionPool", "request"]
 
 from collections import defaultdict, deque, UserString
@@ -12,7 +12,7 @@ from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from inspect import signature
 from os import PathLike
-from socket import socket, MSG_DONTWAIT
+from socket import socket
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
@@ -90,6 +90,10 @@ class ConnectionPool:
             for con in dq:
                 con.close()
 
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        return f"{cls.__module__}.{cls.__qualname__}({self.pool!r})"
+
     def get_connection(
         self, 
         /, 
@@ -110,11 +114,18 @@ class ConnectionPool:
                 con = dq.popleft()
             except IndexError:
                 break
-            try:
-                if not con.sock or getattr(con.sock, "_closed") or socket.recv(con.sock, 1, MSG_DONTWAIT):
-                    con.connect()
-            except BlockingIOError:
-                pass
+            sock = con.sock
+            if not sock or getattr(sock, "_closed"):
+                con.connect()
+            else:
+                sock.setblocking(False)
+                try:
+                    if socket.recv(sock, 1):
+                        con.connect()
+                except BlockingIOError:
+                    pass
+                finally:
+                    sock.setblocking(True)
             con.timeout = timeout
             return con
         if url.scheme == "https":
@@ -265,6 +276,7 @@ def request[T](
     url      = request_args["url"]
     body     = cast(None | Buffer | Iterable[Buffer], request_args["data"])
     headers_ = request_args["headers"]
+    headers_.setdefault("connection", "keep-alive")
     need_set_cookie = "cookie" not in headers_
     response_cookies = CookieJar()
     connection: HTTPConnection | HTTPSConnection
@@ -294,7 +306,7 @@ def request[T](
             headers_, 
         )
         response = connection.getresponse()
-        if pool:
+        if pool and headers_.get("connection") == "keep-alive":
             setattr(response, "pool", pool)
         setattr(response, "connection", connection)
         setattr(response, "url", url)

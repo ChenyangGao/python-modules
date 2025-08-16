@@ -2,32 +2,32 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = ["urlopen", "request", "download"]
 
-import errno
-
-from collections import UserString
+from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
 from copy import copy
-from http.client import HTTPResponse
+from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
 from http.cookiejar import CookieJar
+from http.cookies import SimpleCookie
 from inspect import isgenerator
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from socket import getdefaulttimeout, setdefaulttimeout
+from socket import socket
 from ssl import SSLContext, _create_unverified_context
 from types import EllipsisType
 from typing import cast, overload, Any, Literal
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, ParseResult, SplitResult
 from urllib.request import (
-    build_opener, BaseHandler, HTTPCookieProcessor, HTTPSHandler, 
-    HTTPRedirectHandler, OpenerDirector, Request, 
+    build_opener, AbstractHTTPHandler, BaseHandler, HTTPHandler, 
+    HTTPSHandler, HTTPRedirectHandler, OpenerDirector, Request, 
 )
 
 from argtools import argcount
-from cookietools import cookies_dict_to_str
+from cookietools import cookies_to_str, extract_cookies, update_cookies
 from dicttools import iter_items
 from filewrap import bio_skip_iter, bio_chunk_iter, SupportsRead, SupportsWrite
 from http_request import normalize_request_args, SupportsGeturl
@@ -35,27 +35,220 @@ from http_response import (
     decompress_response, get_filename, get_length, is_chunked, is_range_request, 
     parse_response, 
 )
+from property import locked_cacheproperty
 from yarl import URL
 from undefined import undefined, Undefined
 
 
 type string = Buffer | str | UserString
 
+if "__del__" not in HTTPConnection.__dict__:
+    setattr(HTTPConnection, "__del__", HTTPConnection.close)
+if "__del__" not in HTTPSConnection.__dict__:
+    setattr(HTTPSConnection, "__del__", HTTPSConnection.close)
 if "__del__" not in HTTPResponse.__dict__:
     setattr(HTTPResponse, "__del__", HTTPResponse.close)
 if "__del__" not in OpenerDirector.__dict__:
     setattr(OpenerDirector, "__del__", OpenerDirector.close)
 
+def _close_conn(self, /):
+    fp = self.fp
+    self.fp = None
+    pool = getattr(self, "pool", None)
+    conn = getattr(self, "connection", None)
+    if pool and conn:
+        try:
+            pool.return_connection(conn)
+        except NameError:
+            pass
+    else:
+        fp.close()
+
+setattr(HTTPResponse, "_close_conn", _close_conn)
+
+
+def is_ipv6(host: str, /) -> bool:
+    from ipaddress import _BaseV6, AddressValueError
+    try:
+        _BaseV6._ip_int_from_string(host) # type: ignore
+        return True
+    except AddressValueError:
+        return False
+
+
+class HTTPCookieProcessor(BaseHandler):
+
+    def __init__(
+        self, 
+        /, 
+        cookies: None | CookieJar | SimpleCookie = None, 
+    ):
+        if cookies is None:
+            cookies = CookieJar()
+        self.cookies = cookies
+
+    def http_request(self, request):
+        cookies = self.cookies
+        if cookies:
+            if isinstance(cookies, SimpleCookie):
+                cookies = update_cookies(CookieJar(), cookies)
+            cookies.add_cookie_header(request)
+        return request
+
+    def http_response(self, request, response):
+        extract_cookies(self.cookies, request.full_url, response) # type: ignore
+        return response
+
+    https_request = http_request
+    https_response = http_response
+
+
+class ConnectionPool:
+
+    def __init__(
+        self, 
+        /, 
+        pool: None | defaultdict[str, deque[HTTPConnection] | deque[HTTPSConnection]] = None, 
+    ):
+        if pool is None:
+            pool = defaultdict(deque)
+        self.pool = pool
+
+    def __del__(self, /):
+        for dq in self.pool.values():
+            for con in dq:
+                con.close()
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        return f"{cls.__module__}.{cls.__qualname__}({self.pool!r})"
+
+    def get_connection(
+        self, 
+        /, 
+        url: str | ParseResult | SplitResult, 
+        timeout: None | float = None, 
+    ) -> HTTPConnection | HTTPSConnection:
+        if isinstance(url, str):
+            url = urlsplit(url)
+        assert url.scheme, "not a complete URL"
+        host = url.hostname or "localhost"
+        if is_ipv6(host):
+            host = f"[{host}]"
+        port = url.port or (443 if url.scheme == 'https' else 80)
+        origin = f"{url.scheme}://{host}:{port}"
+        dq = self.pool[origin]
+        while True:
+            try:
+                con = dq.popleft()
+            except IndexError:
+                break
+            sock = con.sock
+            if not sock or getattr(sock, "_closed"):
+                con.connect()
+            else:
+                sock.setblocking(False)
+                try:
+                    if socket.recv(sock, 1):
+                        con.connect()
+                except BlockingIOError:
+                    pass
+                finally:
+                    sock.setblocking(True)
+            con.timeout = timeout
+            return con
+        if url.scheme == "https":
+            return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)
+        else:
+            return HTTPConnection(url.hostname or "localhost", url.port, timeout=timeout)
+
+    def return_connection(
+        self, 
+        con: HTTPConnection | HTTPSConnection, 
+        /, 
+    ) -> str:
+        if isinstance(con, HTTPSConnection):
+            scheme = "https"
+        else:
+            scheme = "http"
+        host = con.host
+        if is_ipv6(host):
+            host = f"[{host}]"
+        origin = f"{scheme}://{host}:{con.port}"
+        self.pool[origin].append(con) # type: ignore
+        return origin
+
+
+class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
+
+    @locked_cacheproperty
+    def pool(self, /) -> ConnectionPool:
+        return ConnectionPool()
+
+    def do_open(self, /, http_class, req, **http_conn_args) -> HTTPResponse:
+        host = req.host
+        if not host:
+            raise URLError("no host given")
+        pool = self.pool
+        if issubclass(http_class, HTTPSHandler):
+            origin = "https://" + host
+        else:
+            origin = "http://" + host
+        h = pool.get_connection(origin, timeout=req.timeout)
+        h.set_debuglevel(self._debuglevel) # type: ignore
+        headers = dict(req.unredirected_hdrs)
+        headers.update({k: v for k, v in req.headers.items()
+                        if k not in headers})
+        headers.setdefault("connection", "keep-alive")
+        if req._tunnel_host:
+            tunnel_headers = {}
+            proxy_auth_hdr = "Proxy-Authorization"
+            if proxy_auth_hdr in headers:
+                tunnel_headers[proxy_auth_hdr] = headers[proxy_auth_hdr]
+                del headers[proxy_auth_hdr]
+            h.set_tunnel(req._tunnel_host, headers=tunnel_headers)
+        try:
+            try:
+                h.request(req.get_method(), req.selector, req.data, headers,
+                          encode_chunked=req.has_header('Transfer-encoding'))
+            except OSError as err:
+                raise URLError(err)
+            r = h.getresponse()
+        except:
+            pool.return_connection(h)
+            raise
+        r.url = req.get_full_url()
+        r.msg = r.reason
+        if headers.get("connection") == "keep-alive":
+            setattr(r, "pool", pool)
+        setattr(r, "connection", h)
+        return r
+
+
+class KeepAliveHTTPHandler(HTTPHandler, KeepAliveBaseHTTPHandler):
+    pass
+
+
+class KeepAliveHTTPSHandler(HTTPSHandler, KeepAliveBaseHTTPHandler):
+    pass
+
+
+_pool = ConnectionPool()
+_http_handler = KeepAliveHTTPHandler()
+_http_handler.pool = _pool
+_https_handler = KeepAliveHTTPSHandler(context=_create_unverified_context())
+_https_handler.pool = _pool
 _cookies = CookieJar()
-_opener: OpenerDirector = build_opener(HTTPSHandler(context=_create_unverified_context()), HTTPCookieProcessor(_cookies))
+_opener: OpenerDirector = build_opener(
+    _http_handler, 
+    _https_handler, 
+    HTTPCookieProcessor(_cookies), 
+)
 setattr(_opener, "cookies", _cookies)
 
 
-if getdefaulttimeout() is None:
-    setdefaulttimeout(60)
-
-
 class NoRedirectHandler(HTTPRedirectHandler):
+
     def redirect_request(self, /, *args, **kwds):
         return None
 
@@ -71,7 +264,7 @@ def urlopen(
     follow_redirects: bool = True, 
     proxies: None | Mapping[str, str] | Iterable[tuple[str, str]] = None, 
     context: None | SSLContext = None, 
-    cookies: None | CookieJar = None, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     timeout: None | Undefined | float = undefined, 
     opener: None | OpenerDirector = _opener, 
     **_, 
@@ -99,18 +292,51 @@ def urlopen(
     headers_ = request.headers
     if opener is None:
         handlers: list[BaseHandler] = []
+        if cookies is None:
+            cookies = CookieJar()
     else:
         handlers = list(map(copy, getattr(opener, "handlers")))
         if cookies is None:
             cookies = getattr(opener, "cookies", None)
     if cookies and "cookie" not in headers_:
-        headers_["cookie"] = cookies_dict_to_str(cookies)
-    if context is not None:
-        handlers.append(HTTPSHandler(context=context))
-    elif opener is None:
-        handlers.append(HTTPSHandler(context=_create_unverified_context()))
-    if cookies is not None and (opener is None or all(
-        h.cookiejar is not cookies 
+        headers_["cookie"] = cookies_to_str(cookies)
+    if context is None:
+        if opener is None:
+            handlers.append(copy(_https_handler))
+        else:
+            for i, handler in enumerate(handlers):
+                if isinstance(handler, KeepAliveHTTPSHandler):
+                    break
+                elif isinstance(handler, HTTPSHandler):
+                    handlers[i] = copy(_https_handler)
+                    break
+            else:
+                handlers.append(copy(_https_handler))
+    else:
+        https_handler = KeepAliveHTTPSHandler(context=context)
+        https_handler.pool = _pool
+        if opener is None:
+            handlers.append(https_handler)
+        else:
+            for i, handler in enumerate(handlers):
+                if isinstance(handler, HTTPSHandler):
+                    handlers[i] = https_handler
+                    break
+            else:
+                handlers.append(https_handler)
+    if opener is None:
+        handlers.append(copy(_http_handler))
+    else:
+        for i, handler in enumerate(handlers):
+            if isinstance(handler, KeepAliveHTTPHandler):
+                break
+            elif isinstance(handler, HTTPHandler):
+                handlers[i] = copy(_http_handler)
+                break
+        else:
+            handlers.append(copy(_http_handler))
+    if cookies and (opener is None or all(
+        h.cookies is not cookies 
         for h in getattr(opener, "handlers") if isinstance(h, HTTPCookieProcessor)
     )):
         handlers.append(HTTPCookieProcessor(cookies))
@@ -126,7 +352,7 @@ def urlopen(
         if timeout is undefined:
             response = opener.open(request)
         else:
-            response = opener.open(request, timeout=cast(None|float, timeout))
+            response = opener.open(request, timeout=cast(None | float, timeout))
         setattr(response, "opener", opener)
         setattr(response, "cookies", response_cookies)
         return response
@@ -148,6 +374,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     *, 
     parse: None | EllipsisType = None, 
     **request_kwargs, 
@@ -164,6 +391,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     *, 
     parse: Literal[False], 
     **request_kwargs, 
@@ -180,6 +408,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     *, 
     parse: Literal[True], 
     **request_kwargs, 
@@ -196,6 +425,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     *, 
     parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
     **request_kwargs, 
@@ -211,6 +441,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
+    cookies: None | CookieJar | SimpleCookie = None, 
     *, 
     parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
     **request_kwargs, 
@@ -225,6 +456,7 @@ def request[T](
             files=files, 
             headers=headers, 
             follow_redirects=follow_redirects, 
+            cookies=cookies, 
             **request_kwargs, 
         )
     except HTTPError as e:
@@ -332,7 +564,7 @@ def download(
                     return file
             elif content_length is not None and filesize > content_length:
                 raise OSError(
-                    errno.EIO, 
+                    5, # errno.EIO
                     f"file {file!r} is larger than url {url!r}: {filesize} > {content_length} (in bytes)", 
                 )
     reporthook_close: None | Callable = None
@@ -353,7 +585,10 @@ def download(
                 response.close()
                 response = urlopen(url, headers={**headers, "Range": "bytes=%d-" % filesize}, **request_kwargs)
                 if not is_range_request(response):
-                    raise OSError(errno.EIO, f"range request failed: {url!r}")
+                    raise OSError(
+                        5, # errno.EIO
+                        f"range request failed: {url!r}", 
+                    )
                 if reporthook is not None:
                     reporthook(filesize)
             elif resume:

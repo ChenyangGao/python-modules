@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["Response", "request"]
 
 from atexit import register
@@ -19,10 +19,11 @@ from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
 from urllib.parse import urljoin
+from warnings import warn
 
 from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies
-from filewrap import bio_chunk_iter, SupportsRead
+from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import decompress_response, parse_response
 import pycurl
@@ -210,27 +211,30 @@ def request[T](
         with closing(Curl()) as curl:
             return request(**locals())
     curl = cast(Curl, curl)
+    body: None | Buffer | Iterable[Buffer] | SupportsRead[Buffer]
     if isinstance(data, PathLike):
         data = open(data, "rb")
     if isinstance(data, SupportsRead):
-        data = bio_chunk_iter(data)
-    request_args = normalize_request_args(
-        method=method, 
-        url=url, 
-        params=params, 
-        data=data, 
-        json=json, 
-        files=files, 
-        headers=headers, 
-    )
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params,  
+            headers=headers, 
+        )
+        body = data
+    else:
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            data=data, 
+            json=json, 
+            files=files, 
+            headers=headers, 
+        )
+        body = cast(None | Buffer | Iterable[Buffer] | SupportsRead[Buffer], request_args["data"])
     method = request_args["method"]
     url = request_args["url"]
-    data = cast(None | Buffer | Iterable, request_args["data"])
-    if data:
-        if isinstance(data, Buffer):
-            data = bytes(data)
-        else:
-            data = map(bytes, data)
     headers_ = request_args["headers"]
     need_set_cookie = "cookie" not in headers_
     response_cookies = CookieJar()
@@ -260,11 +264,15 @@ def request[T](
         setopt(pycurl.URL, url)
         curl.setopt(pycurl.NOBODY, method == "HEAD")
         setopt(pycurl.UPLOAD, 0)
-        if data:
-            if isinstance(data, bytes):
-                setopt(pycurl.POSTFIELDS, data)
+        if body:
+            if isinstance(body, Buffer):
+                setopt(pycurl.POSTFIELDS, bytes(body))
+            elif isinstance(body, SupportsRead):
+                setopt(pycurl.UPLOAD, 1)
+                setopt(pycurl.READDATA, body)
             else:
                 setopt(pycurl.UPLOAD, 1)
+                data = map(bytes, body)
                 setopt(pycurl.READFUNCTION, lambda _: next(data, b""))
         else:
             setopt(pycurl.POSTFIELDS, b"")
@@ -281,11 +289,21 @@ def request[T](
         if cookies is not None:
             extract_cookies(cookies, url, response) # type: ignore
         if 300 <= status_code < 400 and follow_redirects:
-            url = urljoin(url, response_headers["location"])
-            if status_code == 303:
-                method = "GET"
-                data = None
-            continue
+            if location := response_headers.get("location"):
+                url = urljoin(url, location)
+                if body and status_code in (307, 308):
+                    if isinstance(body, SupportsRead):
+                        try:
+                            body.seek(0) # type: ignore
+                        except Exception:
+                            warn(f"unseekable-stream: {body!r}")
+                    elif not isinstance(body, Buffer):
+                        warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+                else:
+                    if status_code == 303:
+                        method = "GET"
+                    body = None
+                continue
         elif raise_for_status:
             response.raise_for_status()
         if parse is None or parse is ...:
@@ -303,3 +321,4 @@ def request[T](
             return cast(Callable[[Response, bytes], T], parse)(
                 response, content)
 
+# TODO: 实现异步请求，在响应体未加载完前，一直 await

@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = ["ConnectionPool", "request"]
 
 from collections import defaultdict, deque, UserString
@@ -17,11 +17,12 @@ from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit, urlunsplit, ParseResult, SplitResult
+from warnings import warn
 
 from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies
 from dicttools import get_all_items
-from filewrap import bio_chunk_iter, SupportsRead
+from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import decompress_response, parse_response
 from undefined import undefined, Undefined
@@ -259,22 +260,30 @@ def request[T](
         https_proxy = get_host_pair(proxies.get("https"))
     else:
         http_proxy = https_proxy = None
+    body: Any
     if isinstance(data, PathLike):
-        data = bio_chunk_iter(open(data, "rb"))
-    elif isinstance(data, SupportsRead):
-        data = bio_chunk_iter(data)
-    request_args = normalize_request_args(
-        method=method, 
-        url=url, 
-        params=params, 
-        data=data, 
-        json=json, 
-        files=files, 
-        headers=headers, 
-    )
+        data = open(data, "rb")
+    if isinstance(data, SupportsRead):
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            headers=headers, 
+        )
+        body = data
+    else:
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            data=data, 
+            files=files, 
+            json=json, 
+            headers=headers, 
+        )
+        body = request_args["data"]
     method   = request_args["method"]
     url      = request_args["url"]
-    body     = cast(None | Buffer | Iterable[Buffer], request_args["data"])
     headers_ = request_args["headers"]
     headers_.setdefault("connection", "keep-alive")
     need_set_cookie = "cookie" not in headers_
@@ -316,11 +325,21 @@ def request[T](
             extract_cookies(cookies, url, response) # type: ignore
         status_code = response.status
         if 300 <= status_code < 400 and follow_redirects:
-            url = request_args["url"] = urljoin(url, response.headers["location"])
-            if status_code == 303:
-                method = "GET"
-                body = None
-            continue
+            if location := response.headers.get("location"):
+                url = request_args["url"] = urljoin(url, location)
+                if body and status_code in (307, 308):
+                    if isinstance(body, SupportsRead):
+                        try:
+                            body.seek(0) # type: ignore
+                        except Exception:
+                            warn(f"unseekable-stream: {body!r}")
+                    elif not isinstance(body, Buffer):
+                        warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+                else:
+                    if status_code == 303:
+                        method = "GET"
+                    body = None
+                continue
         elif status_code >= 400 and raise_for_status:
             raise HTTPError(
                 url, 
@@ -347,3 +366,4 @@ def request[T](
             return cast(Callable[[HTTPResponse, bytes], T], parse)(
                 response, content)
 
+# TODO: 实现异步请求，非阻塞模式(sock.setblocking(False))，对于响应体的数据加载，使用 select 模块进行通知

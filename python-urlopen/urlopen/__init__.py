@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 4)
+__version__ = (0, 1, 5)
 __all__ = ["urlopen", "request", "download"]
 
 from collections import defaultdict, deque, UserString
@@ -29,7 +29,7 @@ from urllib.request import (
 from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies, update_cookies
 from dicttools import iter_items
-from filewrap import bio_skip_iter, bio_chunk_iter, SupportsRead, SupportsWrite
+from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import (
     decompress_response, get_filename, get_length, is_chunked, is_range_request, 
@@ -273,19 +273,28 @@ def urlopen(
         request = url
     else:
         if isinstance(data, PathLike):
-            data = bio_chunk_iter(open(data, "rb"))
-        elif isinstance(data, SupportsRead):
-            data = bio_chunk_iter(data)
-        request = Request(**normalize_request_args( # type: ignore
-            method=method, 
-            url=url, 
-            params=params, 
-            data=data, 
-            json=json, 
-            files=files, 
-            headers=headers, 
-            ensure_ascii=True, 
-        ))
+            data = open(data, "rb")
+        if isinstance(data, SupportsRead):
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                headers=headers, 
+                ensure_ascii=True, 
+            )
+            request_args["data"] = data # type: ignore
+        else:
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                data=data, 
+                json=json, 
+                files=files, 
+                headers=headers, 
+                ensure_ascii=True, 
+            )
+        request = Request(**request_args) # type: ignore
         if proxies:
             for host, type in iter_items(proxies):
                 request.set_proxy(host, type)

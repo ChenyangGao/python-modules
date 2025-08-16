@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = ["request"]
 
 from collections import UserString
@@ -15,11 +15,12 @@ from typing import cast, overload, Any, IO, Literal
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import Request
+from warnings import warn
 
 from argtools import argcount
 from cookietools import extract_cookies, cookies_dict_to_str, cookies_str_to_dict
 from dicttools import dict_merge
-from filewrap import bio_chunk_iter, SupportsRead
+from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
 from urllib3.poolmanager import PoolManager
@@ -33,7 +34,7 @@ type string = Buffer | str | UserString
 if "__del__" not in PoolManager.__dict__:
     setattr(PoolManager, "__del__", PoolManager.clear)
 
-_DEFAULT_POOL = PoolManager(128)
+_DEFAULT_POOL = PoolManager(maxsize=128)
 setattr(_DEFAULT_POOL, "cookies", CookieJar())
 
 
@@ -158,30 +159,36 @@ def request[T](
         url      = request.full_url
         data     = request.data
         if isinstance(data, PathLike):
-            body = bio_chunk_iter(open(data, "rb"))
-        elif isinstance(data, SupportsRead):
-            body = bio_chunk_iter(data)
+            body = open(data, "rb")
         else:
             body = data
         headers_ = request.headers
     else:
         if isinstance(data, PathLike):
-            data = bio_chunk_iter(open(data, "rb"))
-        elif isinstance(data, SupportsRead):
-            data = bio_chunk_iter(data)
-        request_args = normalize_request_args(
-            method=method, 
-            url=url, 
-            params=params, 
-            data=data, 
-            files=files, 
-            json=json, 
-            headers=headers, 
-        )
+            data = open(data, "rb")
+        if isinstance(data, SupportsRead):
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                headers=headers, 
+            )
+            body = data
+        else:
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                data=data, 
+                files=files, 
+                json=json, 
+                headers=headers, 
+            )
+            body = request_args["data"]
         method   = request_args["method"]
         url      = request_args["url"]
-        body     = request_args["data"]
         headers_ = request_args["headers"]
+        headers_.setdefault("connection", "keep-alive")
     if cookies is None:
         cookies = getattr(session, "cookies", None)
     if "cookie" in headers_:
@@ -218,21 +225,31 @@ def request[T](
         if cookies is not None:
             extract_cookies(cookies, url, response) # type: ignore
         extract_cookies(response_cookies, url, response)
-        if raise_for_status and response.status >= 400:
+        status_code = response.status
+        if status_code >= 400 and raise_for_status:
             raise HTTPError(
                 url, 
-                response.status, 
+                status_code, 
                 response.reason or "", 
                 response.headers, # type: ignore
                 cast(IO[bytes], response), 
             )
-        if redirect_location := follow_redirects and response.get_redirect_location():
+        elif redirect_location := follow_redirects and response.get_redirect_location():
             dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
             if cookies_dict:
                 headers_["cookie"] = cookies_dict_to_str(cookies_dict)
             url = urljoin(url, redirect_location)
-            if response.status == 303:
-                method = "GET"
+            if body and status_code in (307, 308):
+                if isinstance(body, SupportsRead):
+                    try:
+                        body.seek(0) # type: ignore
+                    except Exception:
+                        warn(f"unseekable-stream: {body!r}")
+                elif not isinstance(body, Buffer):
+                    warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+            else:
+                if status_code == 303:
+                    method = "GET"
                 body = None
             response.drain_conn()
             continue

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "ResponseWrapper", "HTTPStatusError", "request", 
     "request_sync", "request_async", 
@@ -24,7 +24,9 @@ from inspect import isawaitable, signature
 from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
+from urllib.parse import urljoin
 from urllib.request import Request as HTTPRequest
+from warnings import warn
 
 from argtools import argcount
 from cookietools import cookies_to_str
@@ -220,27 +222,36 @@ def request_sync[T](
         setattr(session, "cookies", CookieJar())
     if cookies is None:
         cookies = getattr(session, "cookies", None)
+    if isinstance(data, PathLike):
+        data = bio_chunk_iter(open(data, "rb"))
+    if isinstance(data, Buffer):
+        data = bytes(data)
+    body: None | bytes | Iterable[Buffer] | SupportsRead[bytes] = data
     if isinstance(url, Request):
         request = copy(url)
-        request.headers = include_request_headers(request.headers, url=request.url, content=None)
-    else:
-        if isinstance(data, PathLike):
-            data = bio_chunk_iter(open(data, "rb"))
-        elif isinstance(data, SupportsRead):
+        if isinstance(data, SupportsRead):
             data = bio_chunk_iter(data)
-        request_args = normalize_request_args(
-            method=method, 
-            url=url, 
-            params=params, 
-            data=data, 
-            files=files, 
-            json=json, 
-            headers=headers, 
-        )
-        data = request_args["data"]
-        if isinstance(data, Buffer):
-            if not isinstance(data, bytes):
-                data = bytes(data)
+        request.stream  = enforce_stream(data, name="content")
+        request.headers = include_request_headers(request.headers, url=request.url, content=data)
+    else:
+        if isinstance(data, (Buffer, SupportsRead)):
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                headers=headers, 
+            )
+        else:
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                data=data, 
+                files=files, 
+                json=json, 
+                headers=headers, 
+            )
+            body = data = cast(None | bytes | Iterable[Buffer], request_args["data"])
         request = Request(
             method=enforce_bytes(request_args["method"], name="method"), 
             url=enforce_url(request_args["url"], name="url"), 
@@ -275,20 +286,35 @@ def request_sync[T](
             else:
                 cookies.extract_cookies(response, HTTPRequest(request_url)) # type: ignore
         response_cookies.extract_cookies(response, HTTPRequest(request_url)) # type: ignore
-        if follow_redirects and response.is_redirect():
-            request = copy(request)
-            if response.status == 303:
-                request.method = b"GET"
-                request.stream = enforce_stream(None, name="content")
-            request_url = response.headers["location"]
-            request.url = enforce_url(request_url, name="url")
-            if no_default_cookie_header and ("set-cookie" in response.headers or "set-cookie2" in response.headers):
-                cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
-                request.headers[-1] = (b"cookie", cookie_bytes)
-            request.headers = include_request_headers(raw_headers, url=request.url, content=None)
-            response.read()
-            response.close()
-            continue
+        status_code = response.status
+        if follow_redirects and 300 <= status_code < 400:
+            if location := response.headers.get("location"):
+                request = copy(request)
+                request_url = urljoin(request_url, location)
+                request.url = enforce_url(request_url, name="url")
+                if body and status_code in (307, 308):
+                    if isinstance(body, SupportsRead):
+                        try:
+                            body.seek(0) # type: ignore
+                            data = bio_chunk_iter(body)
+                            request.stream = enforce_stream(data, name="content")
+                        except Exception:
+                            warn(f"unseekable-stream: {body!r}")
+                    elif not isinstance(body, Buffer):
+                        warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+                else:
+                    if status_code == 303:
+                        request.method = b"GET"
+                    body = None
+                    request.stream = enforce_stream(None, name="content")
+                if no_default_cookie_header and ("set-cookie" in response.headers or "set-cookie2" in response.headers):
+                    cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
+                    request.headers[-1] = (b"cookie", cookie_bytes)
+                request.headers = include_request_headers(raw_headers, url=request.url, content=None)
+                if request.method != "HEAD":
+                    response.read()
+                response.close()
+                continue
         elif raise_for_status:
             response.raise_for_status()
         if parse is None:

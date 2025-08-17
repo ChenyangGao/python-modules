@@ -25,7 +25,7 @@ from http_request import normalize_request_args, SupportsGeturl
 from http_response import parse_response
 from httpx import (
     Cookies, Client, AsyncClient, HTTPTransport, AsyncHTTPTransport, 
-    Limits, Request, Response, 
+    Limits, Request, Response, Timeout, 
 )
 from undefined import undefined, Undefined
 from yarl import URL
@@ -63,12 +63,14 @@ _DEFAULT_CLIENT = Client(
     http2=True, 
     limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
     transport=HTTPTransport(retries=5), 
+    timeout=Timeout(connect=5, read=60, write=60, pool=5), 
     verify=False, 
 )
 _DEFAULT_ASYNC_CLIENT = AsyncClient(
     http2=True, 
     limits=Limits(max_connections=256, max_keepalive_connections=64, keepalive_expiry=10), 
     transport=AsyncHTTPTransport(retries=5), 
+    imeout=Timeout(connect=5, read=60, write=60, pool=5), 
     verify=False, 
 )
 

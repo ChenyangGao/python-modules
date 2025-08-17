@@ -34,7 +34,7 @@ type string = Buffer | str | UserString
 if "__del__" not in PoolManager.__dict__:
     setattr(PoolManager, "__del__", PoolManager.clear)
 
-_DEFAULT_POOL = PoolManager(maxsize=128)
+_DEFAULT_POOL = PoolManager(num_pools=64, maxsize=256)
 setattr(_DEFAULT_POOL, "cookies", CookieJar())
 
 

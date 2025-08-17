@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = [
     "get", "get_first", "get_first_item", "get_all", "get_all_items", 
     "pop", "pop_first", "pop_first_item", "pop_all", "pop_all_items", 
-    "setdefault", "setdefault_first", "setdefault_first_item", 
+    "popitem", "setdefault", "setdefault_first", "setdefault_first_item", 
     "setdefault_all", "setdefault_all_items", "discard", "discard_first", 
     "discard_all", "contains", "contains_first", "contains_all", 
-    "contains_value", "update", "merge", "chain_get", "keyof", 
+    "contains_value", "update", "merge", "chain_get", "keyof", "clear", 
     "keys", "values", "items", "iter_keys", "iter_values", "iter_items", 
     "dict_swap", "dict_map", "iter_items_map", "dict_group", "dict_merge", 
     "dict_update", "dict_key_to_lower_merge", "dict_key_to_lower_update", 
@@ -365,6 +365,20 @@ def pop_all_items[K, V, K2, V2](
     return [(k, pop(m, k, default)) for k in keys] # type: ignore
 
 
+def popitem[K, V](m: MutableMapping[K, V], /) -> tuple[K, V]:
+    try:
+        return m.popitem()
+    except (AttributeError, TypeError):
+        while m:
+            try:
+                k = next(iter(m))
+                v = pop(m, k)
+                return k, v
+            except KeyError:
+                pass
+        raise KeyError(f"mutable mapping {m!r} is empty")
+
+
 def setdefault[K, V](
     m: MutableMapping[K, V], 
     k: K, 
@@ -539,6 +553,21 @@ def keyof[K, V](m: Mapping[K, V] | Iterable[tuple[K, V]], v, /) -> K:
             if _hash_eq(v, val, vh):
                 return key
     raise ValueError(f"{m!r} has no key to value {v!r}")
+
+
+def clear(m: MutableMapping, /):
+    try:
+        m.clear()
+        if not m:
+            return
+    except (AttributeError, TypeError):
+        pass
+    ks = keys(m)
+    try:
+        while True:
+            pop(m, next(iter(ks)), None)
+    except StopIteration:
+        pass
 
 
 def keys[K, V](m: Mapping[K, V], /) -> KeysView[K]:

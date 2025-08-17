@@ -269,6 +269,7 @@ def request[T](
             url=url, 
             params=params, 
             headers=headers, 
+            ensure_ascii=True, 
         )
         body = data
     else:
@@ -280,6 +281,7 @@ def request[T](
             files=files, 
             json=json, 
             headers=headers, 
+            ensure_ascii=True, 
         )
         body = request_args["data"]
     method   = request_args["method"]

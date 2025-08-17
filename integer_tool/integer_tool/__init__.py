@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "bit_length", "count1", "count0", "int_to_bytes", 
     "int_to_bitarray", "int_from_bytes", "int_to_str", 
@@ -13,11 +13,12 @@ __all__ = [
     "sup_pow2", "inf_pow2", "floordiv", "ceildiv", "flip", 
     "rotate", "clear_start_ones", "set_start_zeros", 
     "cut_start_ones", "get_first_one", "set_first_zero", 
+    "try_parse_int", 
 ]
 
 from collections.abc import Buffer
 from string import ascii_lowercase, digits
-from typing import cast, Final, Literal
+from typing import cast, Final, Literal, SupportsInt
 
 from bitarray import bitarray
 
@@ -404,4 +405,21 @@ def get_first_one(x: int, /) -> int:
 def set_first_zero(x: int, /) -> int:
     "把右起第 1 个 0 变成 1"
     return x | (x + 1)
+
+
+def try_parse_int(o, /, check_types: None | type | tuple[type, ...] = str):
+    "尝试转换为整数"
+    if isinstance(o, int):
+        return o
+    if check_types is None or isinstance(o, check_types):
+        if isinstance(o, SupportsInt):
+            return int(o)
+        elif isinstance(o, str) and o:
+            if o == "0":
+                return 0
+            elif not (o[0] == "0" or o.lstrip(digits)):
+                return int(o)
+        elif isinstance(o, Buffer):
+            return int_from_bytes(o)
+    return o
 

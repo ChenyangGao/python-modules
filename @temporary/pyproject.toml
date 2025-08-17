@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "integer_tool"
-version = "0.0.6"
-description = "Python functions for integer."
+name = "python-ensure"
+version = "0.0.1"
+description = "Python functions used to ensure something."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/integer_tool"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/integer_tool"
-keywords = ["integer"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-ensure"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-ensure"
+keywords = ["ensure"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,11 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-bitarray = "*"
+integer_tool = ">=0.0.5"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "integer_tool"
+include = "ensure"

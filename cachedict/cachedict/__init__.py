@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 6)
 __all__ = [
-    "SizedDict", "FILODict", "FIFODict", "RRDict", "LRUDict", "LFUDict", 
-    "TTLDict", "PriorityDict", "TLRUDict", "FastFIFODict", "FastLRUDict", 
+    "SizedDict", "LIFODict", "FIFODict", "RRDict", "LRUDict", "MRUDict", 
+    "TTLDict", "LFUDict", "PriorityDict", "ExpireDict", "TLRUDict", 
+    "FastFIFODict", "FastLRUDict", 
 ]
 
-from collections.abc import Callable, Hashable
+from collections import deque, UserDict
+from collections.abc import Callable, Hashable, Iterable, Iterator
+from copy import copy
 from dataclasses import dataclass, field
 from functools import update_wrapper
 from heapq import heappush, heappop, nlargest, nsmallest
@@ -16,9 +21,10 @@ from inspect import signature, _empty
 from itertools import count
 from math import inf, isinf, isnan
 from operator import itemgetter
-from random import randrange
+from random import choice
 from time import time
-from typing import cast, overload, Any, Literal
+from types import MappingProxyType
+from typing import cast, overload, Any, Literal, Self
 from warnings import warn
 
 from undefined import undefined, Undefined
@@ -136,19 +142,56 @@ class SizedDict[K: Hashable, V](dict[K, V]):
         if self.auto_clean:
             self.clean()
         cls = type(self)
-        return f"<{cls.__module__}.{cls.__qualname__} object at {hex(id(self))} with {super().__repr__()}>"
+        maxsize = self.maxsize
+        auto_clean = self.auto_clean
+        return f"<{cls.__module__}.{cls.__qualname__}({maxsize=!r}, {auto_clean=!r}) object at {hex(id(self))} with {super().__repr__()}>"
 
     def __contains__(self, key, /) -> bool:
+        if self.auto_clean:
+            self.clean()
         try:
-            self[key]
+            super().__getitem__(key)
             return True
         except (KeyError, TypeError):
             return False
 
     def __setitem__(self, key: K, value: V, /):
-        if key not in self and self.auto_clean:
+        if self.auto_clean and not super().__contains__(key):
             self.clean(1)
         super().__setitem__(key, value)
+
+    @overload
+    @classmethod
+    def fromkeys[Key](
+        cls, 
+        it: Iterable[Key], 
+        value: None = None, 
+        /, 
+        **init_kwargs, 
+    ) -> SizedDict[Key, Any]:
+        ...
+    @overload
+    @classmethod
+    def fromkeys[Key, Val](
+        cls, 
+        it: Iterable[Key], 
+        value: Val, 
+        /, 
+        **init_kwargs, 
+    ) -> SizedDict[Key, Val]:
+        ...
+    @classmethod
+    def fromkeys[Key, Val](
+        cls, 
+        it: Iterable[Key], 
+        value: None | Val = None, 
+        /, 
+        **init_kwargs, 
+    ) -> SizedDict[Key, Any] | SizedDict[Key, Val]:
+        d = cast(SizedDict[Key, Any], cls(**init_kwargs))
+        for k in it:
+            d[k] = value
+        return d
 
     def clean(self, /, extra: int = 0) -> list[tuple[K, V]]:
         items: list[tuple[K, V]] = []
@@ -160,11 +203,14 @@ class SizedDict[K: Hashable, V](dict[K, V]):
             else:
                 popitem = self.popitem
                 try:
-                    while len(self) > remains:
+                    while super().__len__() > remains:
                         add_item(popitem())
                 except KeyError:
                     pass
         return items
+
+    def copy(self, /) -> Self:
+        return copy(self)
 
     def discard(self, key, /):
         try:
@@ -192,6 +238,21 @@ class SizedDict[K: Hashable, V](dict[K, V]):
         except KeyError:
             return default
 
+    def iter(self, /) -> Iterator[K]:
+        if self.auto_clean:
+            self.clean()
+        return iter(self)
+
+    def items(self, /):
+        if self.auto_clean:
+            self.clean()
+        return super().items()
+
+    def keys(self, /):
+        if self.auto_clean:
+            self.clean()
+        return super().keys()
+
     @overload
     def pop(self, key: K, /, default: Undefined = undefined) -> V:
         ...
@@ -203,7 +264,7 @@ class SizedDict[K: Hashable, V](dict[K, V]):
         ...
     def pop[T](self, key: K, /, default: Undefined | V | T = undefined) -> V | T:
         try:
-            val = self[key]
+            val = super().__getitem__(key)
             self.discard(key)
             return val
         except KeyError:
@@ -251,8 +312,13 @@ class SizedDict[K: Hashable, V](dict[K, V]):
                     if i >= start:
                         self[k] = v
 
+    def values(self, /):
+        if self.auto_clean:
+            self.clean()
+        return super().values()
 
-class FILODict[K: Hashable, V](SizedDict[K, V]):
+
+class LIFODict[K: Hashable, V](SizedDict[K, V]):
     __slots__ = ("maxsize", "auto_clean")
 
     def __setitem__(self, key: K, value: V, /):
@@ -260,7 +326,7 @@ class FILODict[K: Hashable, V](SizedDict[K, V]):
         super().__setitem__(key, value)
 
 
-class FIFODict[K: Hashable, V](FILODict[K, V]):
+class FIFODict[K: Hashable, V](LIFODict[K, V]):
     __slots__ = ("maxsize", "auto_clean")
 
     def popitem(self, /) -> tuple[K, V]:
@@ -279,24 +345,58 @@ class FIFODict[K: Hashable, V](FILODict[K, V]):
 
 
 class RRDict[K: Hashable, V](SizedDict[K, V]):
-    __slots__ = ("maxsize", "auto_clean")
+    __slots__ = ("maxsize", "auto_clean", "_keys", "_key_to_idx")
+
+    def __init__(
+        self, 
+        /, 
+        maxsize: int = 0, 
+        auto_clean: bool = True, 
+    ):
+        super().__init__(maxsize, auto_clean)
+        self._keys: list[K] = []
+        self._key_to_idx: dict[K, int] = {}
+
+    def __copy__(self, /) -> Self:
+        inst = super().copy()
+        inst._keys = copy(self._keys)
+        inst._key_to_idx = copy(self._key_to_idx)
+        return inst
+
+    def __delitem__(self, key: K, /):
+        super().__delitem__(key)
+        i = self._key_to_idx.pop(key)
+        last_key = self._keys.pop()
+        if key is not last_key:
+            self._keys[i] = last_key
+            self._key_to_idx[last_key] = i
+
+    def __setitem__(self, key: K, value: V, /):
+        super().__setitem__(key, value)
+        if key not in self._key_to_idx:
+            keys = self._keys
+            self._key_to_idx[key] = len(keys)
+            keys.append(key)
 
     def popitem(self, /) -> tuple[K, V]:
+        key = self.key
+        return key, self.pop(key)
+
+    @property
+    def key(self, /) -> K:
         try:
-            while True:
-                try:
-                    idx = randrange(len(self))
-                    for i, key in enumerate(self):
-                        if i == idx:
-                            break
-                    return key, self.pop(key)
-                except CleanedKeyError as e:
-                    return e.key, e.value
-                except (KeyError, RuntimeError):
-                    pass
-        except StopIteration:
-            pass
-        raise KeyError(f"{self!r} is empty")
+            return choice(self._keys)
+        except IndexError as e:
+            raise KeyError(f"{self!r} is empty") from e
+
+    @property
+    def value(self, /) -> V:
+        return self[self.key]
+
+    @property
+    def item(self, /) -> tuple[K, V]:
+        key = self.key
+        return key, self[key]
 
 
 class LRUDict[K: Hashable, V](FIFODict[K, V]):
@@ -309,10 +409,193 @@ class LRUDict[K: Hashable, V](FIFODict[K, V]):
         return value
 
 
-class Counter[K](dict[K, int]):
+@dataclass(slots=True)
+class KeyAlive[K]:
+    key: K
+    is_alive: bool = True
+
+    def __bool__(self, /) -> bool:
+        return self.is_alive
+
+    def kill(self, /):
+        self.is_alive = False
+
+
+class MRUDict[K: Hashable, V](SizedDict[K, V]):
+    __slots__ = ("maxsize", "auto_clean", "_key_cache", "_key_deque")
+
+    def __init__(
+        self, 
+        /, 
+        maxsize: int = 0, 
+        auto_clean: bool = True, 
+    ):
+        super().__init__(maxsize, auto_clean)
+        self._key_cache: dict[K, KeyAlive[K]] = {}
+        self._key_deque: deque[KeyAlive[K]] = deque()
+
+    def __copy__(self, /) -> Self:
+        inst = super().copy()
+        inst._key_cache = copy(self._key_cache)
+        inst._key_deque = copy(self._key_deque)
+        return inst
+
+    def __delitem__(self, key: K, /):
+        super().__delitem__(key)
+        if key_alive := self._key_cache.pop(key, None):
+            key_alive.kill()
+
+    def __getitem__(self, key: K, /) -> V:
+        value = super().__getitem__(key)
+        if key_alive := self._key_cache.pop(key, None):
+            key_alive.kill()
+        key_alive = self._key_cache[key] = KeyAlive(key)
+        self._key_deque.appendleft(key_alive)
+        return value
+
+    def __setitem__(self, key: K, value: V, /):
+        super().__setitem__(key, value)
+        if key_alive := self._key_cache.pop(key, None):
+            key_alive.kill()
+        key_alive = self._key_cache[key] = KeyAlive(key)
+        self._key_deque.append(key_alive)
+
+    def popitem(self, /) -> tuple[K, V]:
+        try:
+            pull = self._key_deque.popleft
+            while True:
+                key_alive = pull()
+                try:
+                    if key_alive:
+                        key = key_alive.key
+                        return key, self.pop(key)
+                except CleanedKeyError as e:
+                    return e.key, e.value
+                except (KeyError, RuntimeError):
+                    pass
+        except IndexError:
+            pass
+        raise KeyError(f"{self!r} is empty")
+
+
+class TTLDict[K, V](SizedDict[K, V]):
+    __slots__ = ("maxsize", "auto_clean", "ttl", "is_lru", "_start_time_table")
+
+    def __init__(
+        self, 
+        /, 
+        ttl: float = inf, 
+        is_lru: bool = False, 
+        maxsize: int = 0, 
+        auto_clean: bool = True, 
+    ):
+        super().__init__(maxsize, auto_clean)
+        self.ttl = ttl
+        self.is_lru = is_lru
+        self._start_time_table: dict[K, float] = {}
+
+    def __copy__(self, /) -> Self:
+        inst = super().copy()
+        inst._start_time_table = copy(self._start_time_table)
+        return inst
+
+    def __delitem__(self, key: K, /):
+        super().__delitem__(key)
+        self._start_time_table.pop(key, None)
+
+    def __getitem__(self, key: K, /) -> V:
+        value = super().__getitem__(key)
+        ttl = self.ttl
+        if not (isinf(ttl) or isnan(ttl) or ttl <= 0):
+            try:
+                expired_time = self._start_time_table[key] + ttl
+            except KeyError:
+                pass
+            else:
+                if expired_time <= time():
+                    self.discard(key)
+                    raise CleanedKeyError(key, value)
+        if self.is_lru:
+            self.discard(key)
+            self[key] = value
+        return value
+
+    def __setitem__(self, key: K, value: V, /):
+        start_time_table = self._start_time_table
+        if self.is_lru:
+            self.discard(key)
+        else:
+            start_time_table.pop(key, None)
+        super().__setitem__(key, value)
+        start_time_table[key] = time()
+        if self.auto_clean:
+            self.clean()
+
+    def iter(self, /) -> Iterator[K]:
+        ttl = self.ttl
+        if isinf(ttl) or isnan(ttl) or ttl <= 0:
+            yield from super().iter()
+        else:
+            discard = self.discard
+            watermark = time() - ttl
+            for key, start_time in tuple(self._start_time_table.items()):
+                if start_time <= watermark:
+                    discard(key)
+                else:
+                    yield key
+
+    @property
+    def start_time_table(self, /) -> MappingProxyType:
+        return MappingProxyType(self._start_time_table)
+
+    def clean(self, /, extra: int = 0) -> list[tuple[K, V]]:
+        items = super().clean(extra)
+        ttl = self.ttl
+        if self and not (isinf(ttl) or isnan(ttl) or ttl <= 0):
+            add_item = items.append
+            pop = self.pop
+            watermark = time() - ttl
+            start_time_items = self._start_time_table.items()
+            try:
+                while True:
+                    try:
+                        key, start_time = next(iter(start_time_items))
+                        if start_time > watermark:
+                            break
+                        add_item((key, pop(key)))
+                    except CleanedKeyError as e:
+                        add_item((e.key, e.value))
+                    except (KeyError, RuntimeError):
+                        pass
+            except StopIteration:
+                pass
+        return items
+
+
+class Counter[K: Hashable](UserDict[K, int]):
+
+    def __init__(self, /):
+        self.data = {}
+        self._heap: list[KeyPriority[int, K]] = []
+        self._key_to_entry: dict[K, KeyPriority[int, K]] = {}
 
     def __missing__(self, _: K, /) -> Literal[0]:
         return 0
+
+    def __delitem__(self, key: K, /):
+        super().__delitem__(key)
+        if entry := self._key_to_entry.pop(key, None):
+            entry.key = undefined
+
+    def __setitem__(self, key: K, value: int, /):
+        if value <= 0:
+            del self[key]
+        else:
+            if entry := self._key_to_entry.pop(key, None):
+                entry.key = undefined
+            super().__setitem__(key, value)
+            entry = self._key_to_entry[key] = KeyPriority(value, key=key)
+            heappush(self._heap, entry)
 
     def max(self, /) -> tuple[K, int]:
         try:
@@ -321,10 +604,17 @@ class Counter[K](dict[K, int]):
             raise KeyError(f"{self!r} is empty") from e
 
     def min(self, /) -> tuple[K, int]:
+        heap = self._heap
         try:
-            return min(self.items(), key=itemgetter(1))
-        except ValueError as e:
-            raise KeyError(f"{self!r} is empty") from e
+            while True:
+                key = heap[0].key
+                if key is not undefined:
+                    key = cast(K, key)
+                    return key, self[key]
+                heappop(heap)
+        except IndexError:
+            pass
+        raise KeyError(f"{self!r} is empty")
 
     def most_common(
         self, 
@@ -352,6 +642,11 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
         super().__init__(maxsize, auto_clean)
         self._counter: Counter[K] = Counter()
 
+    def __copy__(self, /) -> Self:
+        inst = super().copy()
+        inst._counter = copy(self._counter)
+        return inst
+
     def __delitem__(self, key: K, /):
         super().__delitem__(key)
         self._counter.pop(key, None)
@@ -366,72 +661,6 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
         self._counter[key] += 1
 
 
-class TTLDict[K, V](SizedDict[K, V]):
-    __slots__ = ("maxsize", "auto_clean", "ttl", "timer", "_ttl_cache")
-
-    def __init__(
-        self, 
-        /, 
-        ttl: int | float = inf, 
-        timer: Callable[[], int | float] = time, 
-        maxsize: int = 0, 
-        auto_clean: bool = True, 
-    ):
-        super().__init__(maxsize, auto_clean)
-        self.ttl = ttl
-        self.timer = timer
-        self._ttl_cache: dict[K, int | float] = {}
-
-    def __delitem__(self, key: K, /):
-        super().__delitem__(key)
-        self._ttl_cache.pop(key, None)
-
-    def __getitem__(self, key: K, /) -> V:
-        value = super().__getitem__(key)
-        ttl = self.ttl
-        if isinf(ttl) or isnan(ttl) or ttl <= 0:
-            return value
-        ttl_cache = self._ttl_cache
-        start = ttl_cache[key]
-        diff = ttl + start - self.timer()
-        if diff <= 0:
-            self.discard(key)
-            ttl_cache.pop(key, None)
-            if diff:
-                raise CleanedKeyError(key, value)
-        return value
-
-    def __setitem__(self, key: K, value: V, /):
-        ttl_cache = self._ttl_cache
-        super().__setitem__(key, value)
-        ttl_cache.pop(key, None)
-        ttl_cache[key] = self.timer()
-        if self.auto_clean:
-            self.clean()
-
-    def clean(self, /, extra: int = 0) -> list[tuple[K, V]]:
-        items = super().clean(extra)
-        ttl = self.ttl
-        if self and not (isinf(ttl) or isnan(ttl) or ttl <= 0):
-            add_item = items.append
-            pop   = self.pop
-            thres = self.timer() - ttl
-            ttl_items = self._ttl_cache.items()
-            while True:
-                try:
-                    key, ts = next(iter(ttl_items))
-                    if ts > thres:
-                        break
-                    add_item((key, pop(key)))
-                except CleanedKeyError as e:
-                    add_item((e.key, e.value))
-                except (KeyError, RuntimeError):
-                    pass
-                except StopIteration:
-                    break
-        return items
-
-
 @dataclass(slots=True, order=True)
 class KeyPriority[F, K]:
     priority: F
@@ -440,21 +669,29 @@ class KeyPriority[F, K]:
 
 
 class PriorityDict[K: Hashable, V](SizedDict[K, V]):
-    __slots__ = ("maxsize", "auto_clean", "priority", "watermark", "_heap", "_key_to_entry")
+    __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
         self, 
         /, 
-        priority: Callable[[V], Any] = lambda _: 0, 
-        watermark: None | Callable[[], Any] = None, 
+        prioritize: Callable[[K, V], Any] = lambda k, v: 0, 
+        watermarker: None | Callable[[], Any] = None, 
+        is_lru: bool = False, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
     ):
         super().__init__(maxsize, auto_clean)
-        self.priority = priority
-        self.watermark = watermark
+        self.prioritize = prioritize
+        self.watermarker = watermarker
+        self.is_lru = is_lru
         self._heap: list[KeyPriority] = []
         self._key_to_entry: dict[K, KeyPriority] = {}
+
+    def __copy__(self, /) -> Self:
+        inst = super().copy()
+        inst._heap = copy(self._heap)
+        inst._key_to_entry = copy(self._key_to_entry)
+        return inst
 
     def __delitem__(self, key: K, /):
         super().__delitem__(key)
@@ -463,17 +700,24 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
 
     def __getitem__(self, key: K) -> V:
         value = super().__getitem__(key)
-        if watermark := self.watermark:
-            priority = self.priority(value)
-            if watermark() >= priority:
+        if watermarker := self.watermarker:
+            priority = self.prioritize(key, value)
+            if watermarker() >= priority:
                 self.discard(key)
                 raise CleanedKeyError(key, value)
+        if self.is_lru:
+            self.discard(key)
+            self[key] = value
         return value
 
     def __setitem__(self, key: K, value: V, /):
-        self.discard(key)
+        if self.is_lru:
+            self.discard(key)
+        else:
+            if entry := self._key_to_entry.pop(key, None):
+                entry.key = undefined
         super().__setitem__(key, value)
-        entry = self._key_to_entry[key] = KeyPriority(self.priority(value), key=key)
+        entry = self._key_to_entry[key] = KeyPriority(self.prioritize(key, value), key=key)
         heappush(self._heap, entry)
 
     def popitem(self, /) -> tuple[K, V]:
@@ -495,17 +739,16 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
         raise KeyError(f"{self!r} is empty")
 
     def clean(self, /, extra: int = 0) -> list[tuple[K, V]]:
-        items = super().clean()
+        items = super().clean(extra)
         add_item = items.append
-        if watermark := self.watermark:
+        if watermarker := self.watermarker:
             heap = self._heap
-            popitem = self.popitem
-            watermark_value = watermark()
+            watermark = watermarker()
             try:
                 while True:
                     entry = heap[0]
                     key = entry.key
-                    if key is not undefined and watermark_value < entry.priority:
+                    if key is not undefined and watermark < entry.priority:
                         break
                     entry1 = heappop(heap)
                     if key is undefined or entry1.key is undefined:
@@ -522,18 +765,34 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
         return items
 
 
-class TLRUDict[K, V](PriorityDict[K, V]):
-    __slots__ = ("maxsize", "auto_clean", "priority", "_heap", "_key_to_entry")
+class ExpireDict[K, V](PriorityDict[K, V]):
+    __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
         self, 
         /, 
-        priority: Callable[[V], float] = itemgetter(0), # type: ignore
-        watermark: Callable[[], float] = time, 
+        expire_timer: float | Callable[[K, V], float] = lambda _, v, /: v[0], # type: ignore
+        watermarker: float | Callable[[], float] = time, 
+        is_lru: bool = False, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
     ):
-        super().__init__(priority, watermark, maxsize, auto_clean)
+        if isinstance(expire_timer, (int, float)) or not callable(expire_timer):
+            ttl = expire_timer
+            expire_timer = lambda *_: time() + ttl
+        if isinstance(watermarker, (int, float)) or not callable(watermarker):
+            offset = watermarker
+            watermarker = lambda: time() + offset
+        super().__init__(
+            prioritize=expire_timer, 
+            watermarker=watermarker, 
+            is_lru=is_lru, 
+            maxsize=maxsize, 
+            auto_clean=auto_clean, 
+        )
+
+
+TLRUDict = ExpireDict
 
 
 class FastFIFODict[K: Hashable, V](dict[K, V]):
@@ -591,7 +850,6 @@ class FastFIFODict[K: Hashable, V](dict[K, V]):
         return value
 
     def update(self, /, *args, **pairs):
-        pop = super().pop
         update = super().update
         for arg in args:
             if arg:

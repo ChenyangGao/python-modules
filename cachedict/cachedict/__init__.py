@@ -639,16 +639,20 @@ class Counter[K: Hashable](UserDict[K, int]):
 
 class LFUDict[K: Hashable, V](SizedDict[K, V]):
     "Least Frequently Used (LFU)"
-    __slots__ = ("maxsize", "auto_clean", "_counter")
+    __slots__ = ("maxsize", "auto_clean", "reset_when_setitem", "reset_when_delitem", "_counter")
 
     def __init__(
         self, 
         /, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        reset_when_setitem: bool = False, 
+        reset_when_delitem: bool = True, 
     ):
         super().__init__(maxsize, auto_clean)
         self._counter: Counter[K] = Counter()
+        self.reset_when_setitem = reset_when_setitem
+        self.reset_when_delitem = reset_when_delitem
 
     def __copy__(self, /) -> Self:
         inst = super().copy()
@@ -657,7 +661,8 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
 
     def __delitem__(self, key: K, /):
         super().__delitem__(key)
-        self._counter.pop(key, None)
+        if self.reset_when_delitem:
+            self._counter.pop(key, None)
 
     def __getitem__(self, key: K, /) -> V:
         value = super().__getitem__(key)
@@ -666,7 +671,10 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
 
     def __setitem__(self, key: K, value: V, /):
         super().__setitem__(key, value)
-        self._counter[key] += 1
+        if self.reset_when_setitem:
+            self._counter[key] = 1
+        else:
+            self._counter[key] += 1
 
 
 @dataclass(slots=True, order=True)
@@ -820,9 +828,11 @@ class ExpireDict[K, V](PriorityDict[K, V]):
 
 TLRUDict = ExpireDict
 
-# TODO: ARCDict: Adaptive Replacement Cache (CC), LFU + LRU
-# TODO: TwoQDict: Two Queues (2Q), FIFO + LRU
-# TODO: LRUKDict: Least Recently Used at least K times (LRU-K), Counter + LRU
+# TODO: ARCDict: Adaptive Replacement Cache (CC), LRU -> LFU
+# TODO: TwoQDict: Two Queues (2Q), FIFO -> LRU
+# TODO: LRUKDict: Least Recently Used at least K times (LRU-K), LFU -> LRU
+# TODO: LFU with each item add_time, use (add_time, count) to calculate a priority value
+# TODO: LFU with each item access_time, use (access_time, count) to calculate a priority value
 
 class FastFIFODict[K: Hashable, V](dict[K, V]):
     __slots__ = ("maxsize", "auto_clean")

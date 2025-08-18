@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "partial_fstring"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python fstring-based template interpolation."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

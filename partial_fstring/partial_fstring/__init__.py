@@ -2,12 +2,19 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
-__all__ = ["Block", "parse", "render"]
+__version__ = (0, 0, 2)
+__all__ = [
+    "FStringPart", "BlockAny", "Block", "FString", "String", 
+    "fstring_part_iter", "parse", "render", 
+]
 
-from collections.abc import Mapping
+from abc import ABC, abstractmethod
+from ast import parse as ast_parse, FormattedValue, JoinedStr
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
+from pprint import pformat
 from re import compile as re_compile
-from typing import Final
+from typing import cast, Final
 
 
 TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
@@ -15,85 +22,120 @@ TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
     ("right_brace", r"\}\}"), 
     ("less_than", r"\\<"), 
     ("greater_than", r"\\>"), 
+    ("vertical_line", r"\\\|"), 
     ("left_block_with_name", r"<(?P<lbq>\?)?\{\{(?!\d)(?P<lbn>\w+)\}\}"), 
     ("left_block", r"<"), 
     ("right_block", r">"), 
-    ("multi_fstring_placeholder", r"\{[^{}]*\}(?:\|\|\{[^{}]*\})+"), 
-    ("fstring_placeholder", r"\{[^{}]*\}"), 
-    ("any", r"(?s:.)")
+    ("block_or", r"\|\|"), 
 ]
-tokenize = re_compile("|".join(f"(?P<{group}>{token})" for group, token in TOKEN_SPECIFICATION)).finditer
+token_find: Final = re_compile("|".join(f"(?P<{group}>{token})" for group, token in TOKEN_SPECIFICATION)).search
 
 
-class Block(list):
+@dataclass(slots=True, frozen=True)
+class FStringPart:
+    start: int
+    stop: int
+    value: str
+    is_placeholder: bool = False
+
+    def __bool__(self):
+        return self.is_placeholder
+
+
+class Render(ABC):
+
+    @abstractmethod
+    def render(self, ns: dict, /) -> str:
+        ...
+
+    def __call__(self, ns: dict, /) -> str:
+        return self.render(ns)
+
+
+class Block(list[Render], Render):
 
     def __init__(
         self, 
         /, 
         name: None | str = None, 
-        hidden: bool = False, 
-        throw: bool = False, 
+        *, 
+        hide: bool = False, 
+        throw: bool = True, 
     ):
         self.name = name
-        self.hidden = hidden
+        self.hide = hide
         self.throw = throw
+
+    def __repr__(self, /) -> str:
+        return f"{type(self).__qualname__}({pformat(list(self))})"
 
     def render(self, ns: dict, /) -> str:
         try:
-            s = "".join(part.render(ns) for part in self)
+            s = "".join(render.render(ns) for render in self)
         except Exception:
             if self.throw:
                 raise
             s = ""
-        if self.name:
-            ns[self.name] = s
-        if self.hidden:
-            return ""
+        if name := self.name:
+            ns[name] = s
+        if self.hide:
+            s = ""
         return s
 
-    __call__ = render
 
-
-class String(str):
-
-    def __str__(self, /) -> str:
-        return super().__str__()
+class BlockAny(Block):
 
     def render(self, ns: dict, /) -> str:
-        return str(self)
+        excs: list[Exception] = []
+        for render in self:
+            try:
+                s = render.render(ns)
+            except Exception as e:
+                excs.append(e)
+            else:
+                if name := self.name:
+                    ns[name] = s
+                if self.hide:
+                    s = ""
+                return s
+        if excs and self.throw:
+            raise ExceptionGroup("render error", excs)
+        return ""
 
 
-class FString(str):
+class String(str, Render):
 
-    def __init__(self, s, /):
-        self.code = compile("f%r" % str(s), "", "eval")
+    def render(self, _: dict, /) -> str:
+        return self
 
-    def __str__(self, /) -> str:
-        return super().__str__()
 
-    def __repr__(self, /) -> str:
-        return "f%r" % str(self)
+class FString(str, Render):
+
+    def __init__(self, s: str, /):
+        self.code = compile("f%r"%s, "", "eval")
 
     def render(self, ns: dict, /) -> str:
         return eval(self.code, ns)
 
 
-class AnyExpr(str):
+def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
+    """Decompose the fstring template, and distinguish between plain text and placeholders.
 
-    def __init__(self, exprs: str, /):
-        self.codes = [compile(expr, "", "eval") for expr in exprs.strip("{}").split("}||{")]
+    :param template: The fstring template
 
-    def render(self, ns: dict, /) -> str:
-        excs = []
-        for code in self.codes:
-            try:
-                return str(eval(code, ns))
-            except Exception as e:
-                excs.append(e)
-        raise ExceptionGroup(self, excs)
+    :return: An iterator, yield object is either plain text or a placeholder (however complex it is). 
+    """
+    fs = ("f%r" % template).encode("utf-8")
+    tree = cast(JoinedStr, ast_parse(fs, "", 'eval').body)
+    start = stop = 0
+    for part in tree.values:
+        value = fs[part.col_offset:part.end_col_offset].decode("utf-8")
+        stop = start + len(value)
+        yield FStringPart(start, stop, value, isinstance(part, FormattedValue))
+        start = stop
 
 
-def parse(template: str) -> Block:
+def parse(template: str, /) -> Block:
     """Template parsing.
 
     :param template: The template string.
@@ -108,9 +150,9 @@ def parse(template: str) -> Block:
            The syntax is "<{{name}}...>", and the value of this block can be referenced repeatedly using "{name}".
         4. Named blocks can be defined without output, allowing later references. The syntax is "<?{{name}}...>".
         5. If you want to use "<" and ">", but not as block indicators, write them as "\\<" and "\\>".
-        6. Supports the binary operator "||". The syntax is "{expr1}||{expr2}", where the two placeholders must be adjacent. 
-           If "{expr1}" doesn’t raise an error, its value is used; otherwise, "{expr2}" is executed, and its value is used or 
-           raises an error. This operator can be chained indefinitely.
+        6. Supports the binary operator "||". The syntax is "part1||part2". 
+           If ``part1`` doesn't raise an error, its value will be used; otherwise, ``part2`` is executed, and its value 
+           will be used or raises an error. This operator can be chained indefinitely. 
 
     Introduction to Python's f-strings::
         - https://docs.python.org/3/reference/lexical_analysis.html#formatted-string-literals
@@ -140,56 +182,65 @@ def parse(template: str) -> Block:
 
                 <{{prefix}}{title}< ({year})>>< [tmdbid={tmdbid}]>/{prefix}<-{part}>< - {videoFormat}><.{edition}><.{videoCodec}><.{audioCodec}><-{releaseGroup}>{fileExt}
     """
-    block = Block(throw=True)
-    stack = [block]
+    block: Block = Block(throw=True)
+    stack: list[Block] = [block]
     depth = 0
-    chars: list[str] = []
-    chars_with_fstring = False
-    def join_chars():
-        nonlocal chars_with_fstring
-        if chars:
-            block.append((FString if chars_with_fstring else String)("".join(chars)))
-            chars.clear()
-        chars_with_fstring = False
-    for match in tokenize(template):
-        
-        match group := match.lastgroup:
-            case "left_block" | "left_block_with_name":
-                join_chars()
-                block = Block(match["lbn"], bool(match["lbq"]))
-                stack[depth].append(block)
-                depth += 1
-                try:
-                    stack[depth] = block
-                except IndexError:
-                    stack.append(block)
-            case "right_block":
-                join_chars()
-                depth -= 1
-                if depth < 0:
-                    raise SyntaxError(f"Mismatched pairs of '<' and '>', at {match.start()}.")
-                block = stack[depth]
-            case "less_than":
-                chars.append("<")
-            case "greater_than":
-                chars.append(">")
-            case "multi_fstring_placeholder":
-                join_chars()
-                block.append(AnyExpr(match[group]))
-            case "left_brace" | "right_brace" | "fstring_placeholder":
-                chars_with_fstring = True
-                chars.append(match[group])
-            case "any":
-                chars.append(match[group])
-    else:
-        if depth > 0:
-            raise SyntaxError("Mismatched pairs of '<' and '>'.")
-        if chars:
-            block.append((FString if chars_with_fstring else String)("".join(chars)))
+    for part in fstring_part_iter(template):
+        value = part.value
+        if part:
+            block.append(FString(value))
+        else:
+            start = 0
+            while match := token_find(value, start):
+                if start != match.start():
+                    block.append(String(value[start:match.start()]))
+                match group := match.lastgroup:
+                    case "left_block" | "left_block_with_name":
+                        if group == "left_block":
+                            block = Block()
+                        else:
+                            block = Block(match["lbn"], hide=bool(match["lbq"]))
+                        block.throw = False
+                        stack[depth].append(block)
+                        depth += 1
+                        try:
+                            stack[depth] = block
+                        except IndexError:
+                            stack.append(block)
+                    case "right_block":
+                        depth -= 1
+                        if depth and isinstance(stack[depth], BlockAny):
+                            depth -= 1
+                        if depth < 0:
+                            raise SyntaxError(f"unmatched '>' at {part.start + match.start()}")
+                        block = stack[depth]
+                    case "block_or":
+                        if depth and isinstance(stack[depth-1], BlockAny):
+                            block = stack[depth] = Block()
+                            stack[depth-1].append(block)
+                        else:
+                            block_any = BlockAny(name=block.name, hide=block.hide, throw=block.throw)
+                            block.__dict__.update(name=None, hide=False, throw=True)
+                            block_any.append(block)
+                            stack[depth] = block_any
+                            block = Block()
+                            block_any.append(block)
+                            depth += 1
+                            try:
+                                stack[depth] = block
+                            except IndexError:
+                                stack.append(block)
+                    case _:
+                        block.append(String(match[0].replace("\\", "")))
+                start = match.end()
+            if start < len(value):
+                block.append(String(value[start:]))
+    if depth and not (depth == 1 and isinstance(stack[0], BlockAny)):
+        raise SyntaxError(f"{depth} '<' not closed")
     return stack[0]
 
 
-def render(block: str | Block, ns: Mapping) -> str:
+def render(block: str | Block, ns: Mapping, /) -> str:
     """Template interpolation.
 
     :param block: If it's a `str`, it is treated as the template string; otherwise, it's treated as the template parsing result object.
@@ -199,7 +250,7 @@ def render(block: str | Block, ns: Mapping) -> str:
     """
     if isinstance(block, str):
         block = parse(block)
-    if type(ns) is not dict:
+    if not isinstance(ns, dict):
         ns = dict(ns)
     return block.render(ns)
 

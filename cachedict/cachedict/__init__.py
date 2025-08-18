@@ -39,6 +39,7 @@ class CleanedKeyError(KeyError):
 
 
 class SizedDict[K: Hashable, V](dict[K, V]):
+    "dictionary with maxsize"
     __slots__ = ("maxsize", "auto_clean")
 
     def __init__(
@@ -319,6 +320,7 @@ class SizedDict[K: Hashable, V](dict[K, V]):
 
 
 class LIFODict[K: Hashable, V](SizedDict[K, V]):
+    "Last In First Out (FIFO)"
     __slots__ = ("maxsize", "auto_clean")
 
     def __setitem__(self, key: K, value: V, /):
@@ -327,6 +329,7 @@ class LIFODict[K: Hashable, V](SizedDict[K, V]):
 
 
 class FIFODict[K: Hashable, V](LIFODict[K, V]):
+    "First In First Out (FIFO)"
     __slots__ = ("maxsize", "auto_clean")
 
     def popitem(self, /) -> tuple[K, V]:
@@ -345,6 +348,7 @@ class FIFODict[K: Hashable, V](LIFODict[K, V]):
 
 
 class RRDict[K: Hashable, V](SizedDict[K, V]):
+    "Random Replacement (RR)"
     __slots__ = ("maxsize", "auto_clean", "_keys", "_key_to_idx")
 
     def __init__(
@@ -400,6 +404,7 @@ class RRDict[K: Hashable, V](SizedDict[K, V]):
 
 
 class LRUDict[K: Hashable, V](FIFODict[K, V]):
+    "Least Recently Used (LRU)"
     __slots__ = ("maxsize", "auto_clean")
 
     def __getitem__(self, key: K, /) -> V:
@@ -422,6 +427,7 @@ class KeyAlive[K]:
 
 
 class MRUDict[K: Hashable, V](SizedDict[K, V]):
+    "Most Recently Used (MRU)"
     __slots__ = ("maxsize", "auto_clean", "_key_cache", "_key_deque")
 
     def __init__(
@@ -479,6 +485,7 @@ class MRUDict[K: Hashable, V](SizedDict[K, V]):
 
 
 class TTLDict[K, V](SizedDict[K, V]):
+    "Time-To-Live (TTL)"
     __slots__ = ("maxsize", "auto_clean", "ttl", "is_lru", "_start_time_table")
 
     def __init__(
@@ -594,7 +601,7 @@ class Counter[K: Hashable](UserDict[K, int]):
             if entry := self._key_to_entry.pop(key, None):
                 entry.key = undefined
             super().__setitem__(key, value)
-            entry = self._key_to_entry[key] = KeyPriority(value, key=key)
+            entry = self._key_to_entry[key] = KeyPriority(value, key)
             heappush(self._heap, entry)
 
     def max(self, /) -> tuple[K, int]:
@@ -631,6 +638,7 @@ class Counter[K: Hashable](UserDict[K, int]):
 
 
 class LFUDict[K: Hashable, V](SizedDict[K, V]):
+    "Least Frequently Used (LFU)"
     __slots__ = ("maxsize", "auto_clean", "_counter")
 
     def __init__(
@@ -664,11 +672,12 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
 @dataclass(slots=True, order=True)
 class KeyPriority[F, K]:
     priority: F
-    number: int = field(default_factory=count(1).__next__)
-    key: K | Undefined = undefined
+    key: K | Undefined = field(default=undefined, compare=False)
+    _id: int = field(default_factory=count(1).__next__, kw_only=True)
 
 
 class PriorityDict[K: Hashable, V](SizedDict[K, V]):
+    "each value with a priority value"
     __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
@@ -695,8 +704,7 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
 
     def __delitem__(self, key: K, /):
         super().__delitem__(key)
-        if entry := self._key_to_entry.pop(key, None):
-            entry.key = undefined
+        self._discard_entry(key)
 
     def __getitem__(self, key: K) -> V:
         value = super().__getitem__(key)
@@ -713,12 +721,29 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
     def __setitem__(self, key: K, value: V, /):
         if self.is_lru:
             self.discard(key)
-        else:
-            if entry := self._key_to_entry.pop(key, None):
-                entry.key = undefined
         super().__setitem__(key, value)
-        entry = self._key_to_entry[key] = KeyPriority(self.prioritize(key, value), key=key)
+        self._add_entry(key, value)
+
+    def _add_entry(self, key: K, value: V, /) -> KeyPriority:
+        self._discard_entry(key)
+        entry = self._key_to_entry[key] = KeyPriority(self.prioritize(key, value), key)
         heappush(self._heap, entry)
+        return entry
+
+    def _discard_entry(self, /, key: K) -> None | KeyPriority:
+        if entry := self._key_to_entry.pop(key, None):
+            entry.key = undefined
+        return entry
+
+    def _pop_entry(self, /) -> KeyPriority:
+        heap = self._heap
+        while heap:
+            entry = heappop(heap)
+            key = entry.key
+            if key is not undefined:
+                self._key_to_entry.pop(cast(K, key), None)
+                return entry
+        raise KeyError("pop from an empty priority queue")
 
     def popitem(self, /) -> tuple[K, V]:
         try:
@@ -766,6 +791,7 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
 
 
 class ExpireDict[K, V](PriorityDict[K, V]):
+    "each value with an expiration timestamp"
     __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
@@ -794,6 +820,9 @@ class ExpireDict[K, V](PriorityDict[K, V]):
 
 TLRUDict = ExpireDict
 
+# TODO: ARCDict: Adaptive Replacement Cache (CC), LFU + LRU
+# TODO: TwoQDict: Two Queues (2Q), FIFO + LRU
+# TODO: LRUKDict: Least Recently Used at least K times (LRU-K), Counter + LRU
 
 class FastFIFODict[K: Hashable, V](dict[K, V]):
     __slots__ = ("maxsize", "auto_clean")

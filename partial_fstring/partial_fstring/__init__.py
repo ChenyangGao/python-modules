@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "FStringPart", "BlockAny", "Block", "FString", "String", 
     "fstring_part_iter", "parse", "render", 
@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from ast import parse as ast_parse, FormattedValue, JoinedStr
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from pprint import pformat
+from textwrap import indent
 from re import compile as re_compile, IGNORECASE
 from typing import cast, Final
 
@@ -50,11 +50,11 @@ class FStringPart:
 class Render(ABC):
 
     @abstractmethod
-    def render(self, ns: Mapping, /) -> str:
+    def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
         ...
 
-    def __call__(self, ns: Mapping, /) -> str:
-        return self.render(ns)
+    def __call__(self, ns: Mapping, /, globals: None | dict = None) -> str:
+        return self.render(ns, globals=globals)
 
 
 class Block(list[Render], Render):
@@ -72,11 +72,16 @@ class Block(list[Render], Render):
         self.throw = throw
 
     def __repr__(self, /) -> str:
-        return f"{type(self).__qualname__}({pformat(list(self))})"
+        name = type(self).__qualname__
+        if len(self) == 0:
+            return f"{name}<>"
+        elif len(self) == 1:
+            return f"{name}<{self[0]!r}>"
+        return f"{name}<{indent(", ".join(f"\n{e!r}" for e in self), "  ")}>"
 
-    def render(self, ns: Mapping, /) -> str:
+    def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
         try:
-            s = "".join(render.render(ns) for render in self)
+            s = "".join(render.render(ns, globals=globals) for render in self)
         except Exception:
             if self.throw:
                 raise
@@ -90,11 +95,11 @@ class Block(list[Render], Render):
 
 class BlockAny(Block):
 
-    def render(self, ns: Mapping, /) -> str:
+    def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
         excs: list[Exception] = []
         for render in self:
             try:
-                s = render.render(ns)
+                s = render.render(ns, globals=globals)
             except Exception as e:
                 excs.append(e)
             else:
@@ -110,7 +115,7 @@ class BlockAny(Block):
 
 class String(str, Render):
 
-    def render(self, _, /) -> str:
+    def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
         return self
 
 
@@ -119,8 +124,8 @@ class FString(str, Render):
     def __init__(self, s: str, /):
         self.code = compile("f%r"%s, "", "eval")
 
-    def render(self, ns: Mapping, /) -> str:
-        return eval(self.code, {}, ns)
+    def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
+        return eval(self.code, globals, ns)
 
 
 def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
@@ -193,12 +198,19 @@ def parse(template: str, /) -> Block:
     for part in fstring_part_iter(template):
         value = part.value
         if part:
-            block.append(FString(value))
+            if block and isinstance((last := block[-1]), (String, FString)):
+                block[-1] = FString(last + value)
+            else:
+                block.append(FString(value))
         else:
             start = 0
             while match := token_find(value, start):
                 if start != match.start():
-                    block.append(String(value[start:match.start()]))
+                    val = value[start:match.start()]
+                    if block and isinstance((last := block[-1]), (String, FString)):
+                        block[-1] = type(last)(last + val)
+                    else:
+                        block.append(String(val))
                 match group := match.lastgroup:
                     case "left_block" | "left_block_with_name":
                         if group == "left_block":
@@ -236,24 +248,35 @@ def parse(template: str, /) -> Block:
                             except IndexError:
                                 stack.append(block)
                     case _:
-                        block.append(String(match[0].replace("\\", "")))
+                        val = match[0].replace("\\", "")
+                        if block and isinstance((last := block[-1]), (String, FString)):
+                            block[-1] = type(last)(last + val)
+                        else:
+                            block.append(String(val))
                 start = match.end()
             if start < len(value):
-                block.append(String(value[start:]))
+                val = value[start:]
+                if block and isinstance((last := block[-1]), (String, FString)):
+                    block[-1] = type(last)(last + val)
+                else:
+                    block.append(String(val))
     if depth and not (depth == 1 and isinstance(stack[0], BlockAny)):
         raise SyntaxError(f"{depth} '<' not closed")
     return stack[0]
 
 
-def render(block: str | Block, ns: Mapping, /) -> str:
+def render(block: str | Block, ns: Mapping, /, globals: None | dict = {}) -> str:
     """Template interpolation.
 
     :param block: If it's a `str`, it is treated as the template string; otherwise, it's treated as the template parsing result object.
     :param ns: The namespace, which contains the values to be referenced.
+    :param globals: The global namespace, you can put some utility functions inside it.
 
     :return: The result string after template interpolation (replacing placeholders).
     """
     if isinstance(block, str):
         block = parse(block)
-    return block.render(ns)
+    return block.render(ns, globals=globals)
 
+# NOTE: eval(x) == eval("f'{%s}'" % x)
+# NOTE: eval("f%r" % x) == eval("f%r" % ("{f'%s'}" % x))

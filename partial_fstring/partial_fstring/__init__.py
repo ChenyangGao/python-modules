@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 4)
 __all__ = [
     "FStringPart", "BlockAny", "Block", "FString", "String", 
     "fstring_part_iter", "parse", "render", 
@@ -13,10 +13,11 @@ from ast import parse as ast_parse, FormattedValue, JoinedStr
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pprint import pformat
-from re import compile as re_compile
+from re import compile as re_compile, IGNORECASE
 from typing import cast, Final
 
 
+CRE_UNICODE_ESCAPE_sub: Final = re_compile(r"[\\0-9a-z]+", flags=IGNORECASE).sub
 TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
     ("left_brace", r"\{\{"), 
     ("right_brace", r"\}\}"), 
@@ -31,6 +32,10 @@ TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
 token_find: Final = re_compile("|".join(f"(?P<{group}>{token})" for group, token in TOKEN_SPECIFICATION)).search
 
 
+def unrepr(s: str, /) -> str:
+    return eval("'%s'" % s.replace("'", "\'"))
+
+
 @dataclass(slots=True, frozen=True)
 class FStringPart:
     start: int
@@ -38,17 +43,17 @@ class FStringPart:
     value: str
     is_placeholder: bool = False
 
-    def __bool__(self):
+    def __bool__(self, /) -> bool:
         return self.is_placeholder
 
 
 class Render(ABC):
 
     @abstractmethod
-    def render(self, ns: dict, /) -> str:
+    def render(self, ns: Mapping, /) -> str:
         ...
 
-    def __call__(self, ns: dict, /) -> str:
+    def __call__(self, ns: Mapping, /) -> str:
         return self.render(ns)
 
 
@@ -69,7 +74,7 @@ class Block(list[Render], Render):
     def __repr__(self, /) -> str:
         return f"{type(self).__qualname__}({pformat(list(self))})"
 
-    def render(self, ns: dict, /) -> str:
+    def render(self, ns: Mapping, /) -> str:
         try:
             s = "".join(render.render(ns) for render in self)
         except Exception:
@@ -77,7 +82,7 @@ class Block(list[Render], Render):
                 raise
             s = ""
         if name := self.name:
-            ns[name] = s
+            ns[name] = s # type: ignore
         if self.hide:
             s = ""
         return s
@@ -85,7 +90,7 @@ class Block(list[Render], Render):
 
 class BlockAny(Block):
 
-    def render(self, ns: dict, /) -> str:
+    def render(self, ns: Mapping, /) -> str:
         excs: list[Exception] = []
         for render in self:
             try:
@@ -94,7 +99,7 @@ class BlockAny(Block):
                 excs.append(e)
             else:
                 if name := self.name:
-                    ns[name] = s
+                    ns[name] = s # type: ignore
                 if self.hide:
                     s = ""
                 return s
@@ -105,7 +110,7 @@ class BlockAny(Block):
 
 class String(str, Render):
 
-    def render(self, _: dict, /) -> str:
+    def render(self, _, /) -> str:
         return self
 
 
@@ -114,8 +119,8 @@ class FString(str, Render):
     def __init__(self, s: str, /):
         self.code = compile("f%r"%s, "", "eval")
 
-    def render(self, ns: dict, /) -> str:
-        return eval(self.code, ns)
+    def render(self, ns: Mapping, /) -> str:
+        return eval(self.code, {}, ns)
 
 
 def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
@@ -129,7 +134,7 @@ def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
     tree = cast(JoinedStr, ast_parse(fs, "", 'eval').body)
     start = stop = 0
     for part in tree.values:
-        value = fs[part.col_offset:part.end_col_offset].decode("utf-8")
+        value = unrepr(fs[part.col_offset:part.end_col_offset].decode("utf-8"))
         stop = start + len(value)
         yield FStringPart(start, stop, value, isinstance(part, FormattedValue))
         start = stop
@@ -250,7 +255,5 @@ def render(block: str | Block, ns: Mapping, /) -> str:
     """
     if isinstance(block, str):
         block = parse(block)
-    if not isinstance(ns, dict):
-        ns = dict(ns)
     return block.render(ns)
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "httpcore_request"
-version = "0.0.4"
+version = "0.0.4.1"
 description = "httpcore request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -28,13 +28,13 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.12"
 httpcore = "*"
-http_response = ">=0.0.8"
+http_response = ">=0.0.9"
 python-argtools = ">=0.0.2"
 python-asynctools = ">=0.1.3"
-python-cookietools = ">=0.0.11"
-python-dicttools = ">=0.0.2"
+python-cookietools = ">=0.1.2"
+python-dicttools = ">=0.0.4"
 python-filewrap = ">=0.2.8"
-python-http_request = ">=0.1.3"
+python-http_request = ">=0.1.4"
 python-undefined = ">=0.0.3"
 yarl = "*"
 

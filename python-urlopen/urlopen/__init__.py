@@ -10,7 +10,7 @@ from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
 from copy import copy
 from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from inspect import isgenerator
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
@@ -81,7 +81,7 @@ class HTTPCookieProcessor(BaseHandler):
     def __init__(
         self, 
         /, 
-        cookies: None | CookieJar | SimpleCookie = None, 
+        cookies: None | CookieJar | BaseCookie = None, 
     ):
         if cookies is None:
             cookies = CookieJar()
@@ -90,7 +90,7 @@ class HTTPCookieProcessor(BaseHandler):
     def http_request(self, request):
         cookies = self.cookies
         if cookies:
-            if isinstance(cookies, SimpleCookie):
+            if isinstance(cookies, BaseCookie):
                 cookies = update_cookies(CookieJar(), cookies)
             cookies.add_cookie_header(request)
         return request
@@ -264,7 +264,7 @@ def urlopen(
     follow_redirects: bool = True, 
     proxies: None | Mapping[str, str] | Iterable[tuple[str, str]] = None, 
     context: None | SSLContext = None, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     timeout: None | Undefined | float = undefined, 
     opener: None | OpenerDirector = _opener, 
     **_, 
@@ -383,7 +383,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     *, 
     parse: None | EllipsisType = None, 
     **request_kwargs, 
@@ -400,7 +400,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     *, 
     parse: Literal[False], 
     **request_kwargs, 
@@ -417,7 +417,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     *, 
     parse: Literal[True], 
     **request_kwargs, 
@@ -434,7 +434,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     *, 
     parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
     **request_kwargs, 
@@ -450,7 +450,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     *, 
     parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
     **request_kwargs, 

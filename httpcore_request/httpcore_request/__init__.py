@@ -19,7 +19,7 @@ from copy import copy
 from http import HTTPStatus
 from http.client import HTTPMessage
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from inspect import isawaitable, signature
 from os import PathLike
 from types import EllipsisType
@@ -140,7 +140,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
     parse: None = None, 
@@ -158,7 +158,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[False], 
@@ -176,7 +176,7 @@ def request_sync(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
     parse: Literal[True], 
@@ -194,7 +194,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
     parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T], 
@@ -211,7 +211,7 @@ def request_sync[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T] = None, 
@@ -279,7 +279,7 @@ def request_sync[T](
         setattr(response, "session", session)
         setattr(response, "cookies", response_cookies)
         if cookies is not None:
-            if isinstance(cookies, SimpleCookie):
+            if isinstance(cookies, BaseCookie):
                 for key, val in response.headers.items():
                     if val and key.lower() in ("set-cookie", "set-cookie2"):
                         cookies.load(val)
@@ -347,7 +347,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None = None, 
@@ -365,7 +365,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[False], 
@@ -383,7 +383,7 @@ async def request_async(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Literal[True], 
@@ -401,7 +401,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], 
@@ -418,7 +418,7 @@ async def request_async[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
@@ -478,7 +478,7 @@ async def request_async[T](
         setattr(response, "session", session)
         setattr(response, "cookies", response_cookies)
         if cookies is not None:
-            if isinstance(cookies, SimpleCookie):
+            if isinstance(cookies, BaseCookie):
                 for key, val in response.headers.items():
                     if val and key.lower() in ("set-cookie", "set-cookie2"):
                         cookies.load(val)
@@ -534,7 +534,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ConnectionPool = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T] = None, 
@@ -553,7 +553,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | AsyncConnectionPool = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
@@ -571,7 +571,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ConnectionPool | AsyncConnectionPool = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 

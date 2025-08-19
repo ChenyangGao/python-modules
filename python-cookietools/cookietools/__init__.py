@@ -17,7 +17,7 @@ from collections.abc import (
 from copy import copy
 from datetime import datetime
 from http.cookiejar import Cookie, CookieJar
-from http.cookies import Morsel, SimpleCookie
+from http.cookies import Morsel, BaseCookie
 from posixpath import commonpath
 from re import compile as re_compile
 from time import gmtime, strftime, strptime, time
@@ -331,7 +331,7 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
 
 
 def cookies_to_dict(
-    cookies: str | CookieJar | SimpleCookie | Mapping[str, Any] | Iterable[Any], 
+    cookies: str | CookieJar | BaseCookie | Mapping[str, Any] | Iterable[Any], 
     /, 
     predicate: None | str | Container[str] | Callable[[str, Any], bool] = None, 
 ) -> dict[str, str]:
@@ -367,7 +367,7 @@ def cookies_to_dict(
                 predicate(cookie.name, cookie)
             )
         }
-    elif isinstance(cookies, SimpleCookie):
+    elif isinstance(cookies, BaseCookie):
         return {
             name: morsel.value for name, morsel in cookies.items()
             if predicate is None or predicate(name, morsel)
@@ -396,7 +396,7 @@ def cookies_to_dict(
 
 
 def cookies_to_str(
-    cookies: str | CookieJar | SimpleCookie | Mapping[str, Any] | Iterable[Any], 
+    cookies: str | CookieJar | BaseCookie | Mapping[str, Any] | Iterable[Any], 
     /, 
     predicate: None | str | Container[str] | Callable[[str, Any], bool] = None, 
 ) -> str:
@@ -430,7 +430,7 @@ def cookies_to_str(
             (cookie.name, cookie.value) for cookie in cookies
             if predicate is None or predicate(cookie.name, cookie)
         )
-    elif isinstance(cookies, SimpleCookie):
+    elif isinstance(cookies, BaseCookie):
         cookie_it = (
             (name, morsel.value) for name, morsel in cookies.items()
             if predicate is None or predicate(name, morsel)
@@ -461,7 +461,7 @@ def cookies_to_str(
     return "; ".join(f"{key}={val}" for key, val in cookie_it if key and val is not None)
 
 
-def extract_cookies[T: (SimpleCookie, CookieJar)](
+def extract_cookies[T: (BaseCookie, CookieJar)](
     cookies: T, 
     url: str, 
     response, 
@@ -473,12 +473,12 @@ def extract_cookies[T: (SimpleCookie, CookieJar)](
     elif hasattr(response, "cookies"):
         update_cookies(cookies, response.cookies)
         return cookies
-    elif isinstance(response, (CookieJar, SimpleCookie)):
+    elif isinstance(response, (CookieJar, BaseCookie)):
         update_cookies(cookies, response)
         return cookies
     else:
         headers = response
-    if isinstance(cookies, SimpleCookie):
+    if isinstance(cookies, BaseCookie):
         for key, val in iter_items(headers):
             key = key.lower()
             if key in (b"set-cookie", b"set-cookie2"):
@@ -491,14 +491,14 @@ def extract_cookies[T: (SimpleCookie, CookieJar)](
     return cookies
 
 
-def update_cookies[T: (SimpleCookie, CookieJar)](
+def update_cookies[T: (BaseCookie, CookieJar)](
     cookies1: T, 
     cookies2, 
     /, 
     **kwargs, 
 ) -> T:
-    if isinstance(cookies1, SimpleCookie):
-        if isinstance(cookies2, SimpleCookie):
+    if isinstance(cookies1, BaseCookie):
+        if isinstance(cookies2, BaseCookie):
             morsels: Iterable[tuple[str, Morsel]] = cookies2.items()
         elif isinstance(cookies2, CookieJar):
             morsels = ((cookie.name, to_morsel(cookie, name=cookie.name, **kwargs)) for cookie in cookies2)
@@ -508,7 +508,7 @@ def update_cookies[T: (SimpleCookie, CookieJar)](
             morsels = ((c.key, c) for c in (c if isinstance(c, Morsel) else to_morsel(c, **kwargs) for c in cookies2))
         cookies1.update(morsels)
     else:
-        if isinstance(cookies2, SimpleCookie):
+        if isinstance(cookies2, BaseCookie):
             cookies: Iterable = cookies2.values()
         elif isinstance(cookies2, CookieJar):
             cookies = cookies2
@@ -530,7 +530,7 @@ def iter_resp_cookies(resp, /) -> Iterator[tuple[str, None | str]]:
         if isinstance(cookies, CookieJar):
             for cookie in cookies:
                 yield cookie.name, cookie.value
-        elif isinstance(cookies, SimpleCookie):
+        elif isinstance(cookies, BaseCookie):
             for name, morsel in cookies.items():
                 yield name, morsel.value
         elif isinstance(cookies, Mapping):
@@ -553,7 +553,7 @@ def iter_resp_cookies(resp, /) -> Iterator[tuple[str, None | str]]:
             headers = resp.getheaders()
         else:
             return
-        cookies = SimpleCookie()
+        cookies = BaseCookie()
         for k, v in iter_items(headers):
             k = k.lower()
             if isinstance(k, Buffer):

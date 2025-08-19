@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = ["request"]
 
 from collections import UserString
@@ -13,7 +13,7 @@ from collections.abc import (
     Iterable, Mapping, 
 )
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from inspect import isawaitable
 from os import PathLike
 from types import EllipsisType
@@ -89,7 +89,7 @@ async def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
     parse: None = None, 
@@ -107,7 +107,7 @@ async def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
     parse: Literal[False], 
@@ -125,7 +125,7 @@ async def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
     parse: Literal[True], 
@@ -143,7 +143,7 @@ async def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
     parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], 
@@ -160,7 +160,7 @@ async def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
     parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
@@ -230,7 +230,7 @@ async def request[T](
     if cookies is not None:
         # from datetime import datetime
         # from blacksheep.client.cookies import Cookie as BlackSheepCookie
-        if isinstance(cookies, SimpleCookie):
+        if isinstance(cookies, BaseCookie):
             # request.cookies.update((name, BlackSheepCookie(name, morsel.value, **{
             #     "expires": morsel.get("expires") and datetime.strptime(morsel["expires"], "%a, %d-%b-%Y %H:%M:%S GMT"), 
             #     "domain": morsel.get("domain"), 

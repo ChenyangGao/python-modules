@@ -13,12 +13,23 @@ from itertools import chain, repeat
 from re import compile as re_compile, escape as re_escape, Pattern
 
 
-def unicode_escape(s: str, /) -> str:
-    return str(encode(s, "unicode_escape"), "ascii")
+CRE_UNICODE_ESCAPE_sub = re_compile(r"(?:\\(?:[\\nrt]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))+").sub
 
 
-def unicode_unescape(s: str, /) -> str:
-    return decode(s, "unicode_escape")
+def unicode_escape(s: str, /, ensure_ascii: bool = True) -> str:
+    if ensure_ascii:
+        return str(encode(s, "unicode_escape"), "ascii")
+    else:
+        return repr(s)[1:-1]
+
+
+def unicode_unescape(s: str, /, use_eval: bool = False) -> str:
+    if s.isascii():
+        return decode(s, "unicode_escape")
+    elif use_eval:
+        return eval(f"'{s.replace("'", "\\'")}'")
+    else:
+        return CRE_UNICODE_ESCAPE_sub(lambda m: decode(m[0], "unicode_escape"), s)
 
 
 def replace[AnyStr: (bytes, str)](

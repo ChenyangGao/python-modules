@@ -12,7 +12,7 @@ from contextlib import closing, contextmanager
 from http import HTTPStatus
 from http.client import HTTPMessage
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from io import BytesIO
 from os import PathLike
 from types import EllipsisType
@@ -124,7 +124,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = COOKIE_JAR, 
+    cookies: None | CookieJar | BaseCookie = COOKIE_JAR, 
     curl: None | Undefined | Curl = undefined, 
     *, 
     parse: None | EllipsisType = None, 
@@ -142,7 +142,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = COOKIE_JAR, 
+    cookies: None | CookieJar | BaseCookie = COOKIE_JAR, 
     curl: None | Undefined | Curl = undefined, 
     *, 
     parse: Literal[False], 
@@ -160,7 +160,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = COOKIE_JAR, 
+    cookies: None | CookieJar | BaseCookie = COOKIE_JAR, 
     curl: None | Undefined | dict | Curl = undefined, 
     *, 
     parse: Literal[True], 
@@ -178,7 +178,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = COOKIE_JAR, 
+    cookies: None | CookieJar | BaseCookie = COOKIE_JAR, 
     curl: None | Undefined | dict | Curl = undefined, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
@@ -195,7 +195,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = COOKIE_JAR, 
+    cookies: None | CookieJar | BaseCookie = COOKIE_JAR, 
     curl: None | Undefined | dict | Curl = undefined, 
     *, 
     parse: None | EllipsisType| bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 

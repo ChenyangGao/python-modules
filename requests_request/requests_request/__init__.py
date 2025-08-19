@@ -10,7 +10,7 @@ from collections.abc import Buffer, Callable, Iterable, Mapping
 from contextlib import closing
 from copy import copy
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from inspect import signature
 from os import PathLike
 from types import EllipsisType
@@ -56,7 +56,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: None | EllipsisType = None, 
@@ -75,7 +75,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Literal[False], 
@@ -94,7 +94,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Literal[True], 
@@ -113,7 +113,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
@@ -131,7 +131,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
     parse: None | EllipsisType| bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 

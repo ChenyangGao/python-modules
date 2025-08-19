@@ -8,7 +8,7 @@ __all__ = ["request"]
 from collections import UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, IO, Literal
@@ -66,7 +66,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: None | EllipsisType = None, 
@@ -85,7 +85,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Literal[False], 
@@ -104,7 +104,7 @@ def request(
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Literal[True], 
@@ -123,7 +123,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
@@ -141,7 +141,7 @@ def request[T](
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
     stream: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
     parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 

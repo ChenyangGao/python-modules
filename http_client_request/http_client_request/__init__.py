@@ -9,7 +9,7 @@ from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
 from http.cookiejar import CookieJar
-from http.cookies import SimpleCookie
+from http.cookies import BaseCookie
 from inspect import signature
 from os import PathLike
 from socket import socket
@@ -165,7 +165,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined, 
     *, 
@@ -184,7 +184,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined, 
     *, 
@@ -203,7 +203,7 @@ def request(
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined, 
     *, 
@@ -222,7 +222,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined,  
     *, 
@@ -240,7 +240,7 @@ def request[T](
     headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
     follow_redirects: bool = True, 
     raise_for_status: bool = True, 
-    cookies: None | CookieJar | SimpleCookie = None, 
+    cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined,  
     *, 

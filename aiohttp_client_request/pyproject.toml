@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aiohttp_client_request"
-version = "0.1.1"
+version = "0.1.2"
 description = "aiohttp request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -28,12 +28,12 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.12"
 aiohttp = "*"
-http_response = ">=0.0.6"
+http_response = ">=0.0.9"
 python-argtools = ">=0.0.2"
-python-cookietools = ">=0.0.8"
-python-dicttools = ">=0.0.2"
+python-cookietools = ">=0.1.2"
+python-dicttools = ">=0.0.4"
 python-filewrap = ">=0.2.8"
-python-http_request = ">=0.1.0"
+python-http_request = ">=0.1.4"
 python-undefined = ">=0.0.3"
 yarl = "*"
 

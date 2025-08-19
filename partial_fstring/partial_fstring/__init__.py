@@ -10,14 +10,16 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from ast import parse as ast_parse, FormattedValue, JoinedStr
+from codecs import decode
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from textwrap import indent
-from re import compile as re_compile, IGNORECASE
+from re import compile as re_compile, Match
 from typing import cast, Final
 
 
-CRE_UNICODE_ESCAPE_sub: Final = re_compile(r"[\\0-9a-z]+", flags=IGNORECASE).sub
+CRE_REPR_ESCAPE_sub: Final = re_compile(r"(?P<twobs>\\\\)|(?i:[\\0-9a-z]+)").sub
 TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
     ("left_brace", r"\{\{"), 
     ("right_brace", r"\}\}"), 
@@ -32,8 +34,22 @@ TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
 token_find: Final = re_compile("|".join(f"(?P<{group}>{token})" for group, token in TOKEN_SPECIFICATION)).search
 
 
-def unrepr(s: str, /) -> str:
-    return eval("'%s'" % s.replace("'", "\'"))
+def unrepr(
+    s: str, 
+    /, 
+    use_eval: bool = False, 
+    del_quote: bool = True, 
+) -> str:
+    if del_quote:
+        s = s.removeprefix("'").removesuffix("'")
+    if use_eval:
+        return eval("'%s'" % s.replace("'", "\'"))
+    def repl(m: Match, /) -> str:
+        if m.lastgroup == "towbs":
+            return "\\"
+        else:
+            return decode(m[0], "unicode_escape")
+    return CRE_REPR_ESCAPE_sub(repl, s)
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,8 +137,12 @@ class String(str, Render):
 
 class FString(str, Render):
 
-    def __init__(self, s: str, /):
-        self.code = compile("f%r"%s, "", "eval")
+    def __repr__(self) -> str:
+        return "f" + super().__repr__()
+
+    @cached_property
+    def code(self, /):
+        return compile(repr(self), "", "eval")
 
     def render(self, ns: Mapping, /, globals: None | dict = None) -> str:
         return eval(self.code, globals, ns)
@@ -139,7 +159,7 @@ def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
     tree = cast(JoinedStr, ast_parse(fs, "", 'eval').body)
     start = stop = 0
     for part in tree.values:
-        value = unrepr(fs[part.col_offset:part.end_col_offset].decode("utf-8"))
+        value = unrepr(fs[part.col_offset:part.end_col_offset].decode("utf-8"), del_quote=False)
         stop = start + len(value)
         yield FStringPart(start, stop, value, isinstance(part, FormattedValue))
         start = stop
@@ -280,3 +300,5 @@ def render(block: str | Block, ns: Mapping, /, globals: None | dict = {}) -> str
 
 # NOTE: eval(x) == eval("f'{%s}'" % x)
 # NOTE: eval("f%r" % x) == eval("f%r" % ("{f'%s'}" % x))
+
+# TODO: 为输入条目添加包装类，至少实现 1. 链式操作 2. 管道 3. 扩展语法 4. 注入上下文和内省

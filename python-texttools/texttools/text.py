@@ -3,15 +3,40 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "unicode_escape", "unicode_unescape", "replace", "replace_index", "translate", 
-    "text_within", "text_to_dict", "dict_to_text", 
+    "unrepr", "unicode_escape", "unicode_unescape", "replace", 
+    "replace_index", "translate", "text_within", "text_to_dict", 
+    "dict_to_text", 
 ]
 
 from collections.abc import Iterable, Iterator, Mapping
 from codecs import decode, encode
 from itertools import chain, repeat
-from re import compile as re_compile, escape as re_escape, Pattern
-from typing import AnyStr
+from re import (
+    compile as re_compile, escape as re_escape, 
+    Match, Pattern, 
+)
+from typing import Final
+
+
+CRE_REPR_ESCAPE_sub: Final = re_compile(r"(?P<twobs>\\\\)|(?i:[\\0-9a-z]+)").sub
+
+
+def unrepr(
+    s: str, 
+    /, 
+    use_eval: bool = False, 
+    del_quote: bool = True, 
+) -> str:
+    if del_quote:
+        s = s.removeprefix("'").removesuffix("'")
+    if use_eval:
+        return eval("'%s'" % s.replace("'", "\'"))
+    def repl(m: Match, /) -> str:
+        if m.lastgroup == "towbs":
+            return "\\"
+        else:
+            return decode(m[0], "unicode_escape")
+    return CRE_REPR_ESCAPE_sub(repl, s)
 
 
 def unicode_escape(s: str, /) -> str:
@@ -22,7 +47,7 @@ def unicode_unescape(s: str, /) -> str:
     return decode(s, "unicode_escape")
 
 
-def replace(
+def replace[AnyStr: (bytes, str)](
     s: AnyStr, 
     olds: AnyStr | Iterable[AnyStr] | Pattern[AnyStr], 
     new: None | AnyStr = None, 
@@ -35,7 +60,7 @@ def replace(
         new = "" if isinstance(s, str) else b""
     if isinstance(olds, (bytes, str)):
         return s.replace(olds, new, count)
-    def repl(m) -> AnyStr:
+    def repl(_, /) -> AnyStr:
         return new
     if isinstance(olds, Pattern):
         pat = olds
@@ -45,7 +70,7 @@ def replace(
     return pat.sub(repl, s, count)
 
 
-def replace_index(
+def replace_index[AnyStr: (bytes, str)](
     s: AnyStr, 
     olds: AnyStr | Iterable[AnyStr] | Pattern[AnyStr], 
     new: None | AnyStr = None, 
@@ -86,7 +111,7 @@ def replace_index(
     return pat.sub(repl, s, count)
 
 
-def text_within(
+def text_within[AnyStr: (bytes, str)](
     text: AnyStr, 
     prefix: None | AnyStr | Pattern[AnyStr] = None, 
     suffix: None | AnyStr | Pattern[AnyStr] = None, 
@@ -152,7 +177,7 @@ def translate(
     return str.translate(s, transtab)
 
 
-def text_to_dict(
+def text_to_dict[AnyStr: (bytes, str)](
     s: AnyStr, 
     /, 
     kv_sep: AnyStr | Pattern[AnyStr], 
@@ -184,7 +209,7 @@ def text_to_dict(
     return d
 
 
-def dict_to_text(
+def dict_to_text[AnyStr: (bytes, str)](
     d: dict[AnyStr, AnyStr], 
     /, 
     kv_sep: AnyStr, 

@@ -35,12 +35,10 @@ render("<{a}>{b}", {"b": 1})
 Some more detailed tests show below:
 
 ```console
-
-
 >>> from partial_fstring import render
 >>> class mdict(dict):
 ...     @staticmethod
-...     def __getitem__(key):
+...     def __missing__(key):
 ...         return "{%s}" % key
 >>> s = "{title}< ({year})>< [tmdbid={tmdbid}]>/Season {season}/{title} - {season_episode}<-{part}>< - 第 {episode} 集>< - {videoFormat}><.{edition}><.{videoCodec}><.{audioCodec}><-{releaseGroup}>{fileExt}"
 >>> render(s, mdict())

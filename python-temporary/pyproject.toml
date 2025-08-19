@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-ensure"
+name = "python-temporary"
 version = "0.0.1"
-description = "Python functions used to ensure something."
+description = "Python temporary context."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-ensure"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-ensure"
-keywords = ["ensure"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-temporary"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-temporary"
+keywords = ["temporary", "context"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-integer_tool = ">=0.0.5"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "ensure"
+include = "temporary"

@@ -10,16 +10,14 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from ast import parse as ast_parse, FormattedValue, JoinedStr
-from codecs import decode
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from textwrap import indent
-from re import compile as re_compile, Match
+from re import compile as re_compile
 from typing import cast, Final
 
 
-CRE_REPR_ESCAPE_sub: Final = re_compile(r"(?P<twobs>\\\\)|(?i:[\\0-9a-z]+)").sub
 TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
     ("left_brace", r"\{\{"), 
     ("right_brace", r"\}\}"), 
@@ -32,24 +30,6 @@ TOKEN_SPECIFICATION: Final[list[tuple[str, str]]] = [
     ("block_or", r"\|\|"), 
 ]
 token_find: Final = re_compile("|".join(f"(?P<{group}>{token})" for group, token in TOKEN_SPECIFICATION)).search
-
-
-def unrepr(
-    s: str, 
-    /, 
-    use_eval: bool = False, 
-    del_quote: bool = True, 
-) -> str:
-    if del_quote:
-        s = s.removeprefix("'").removesuffix("'")
-    if use_eval:
-        return eval("'%s'" % s.replace("'", "\'"))
-    def repl(m: Match, /) -> str:
-        if m.lastgroup == "towbs":
-            return "\\"
-        else:
-            return decode(m[0], "unicode_escape")
-    return CRE_REPR_ESCAPE_sub(repl, s)
 
 
 @dataclass(slots=True, frozen=True)
@@ -156,10 +136,11 @@ def fstring_part_iter(template: str, /) -> Iterator[FStringPart]:
     :return: An iterator, yield object is either plain text or a placeholder (however complex it is). 
     """
     fs = ("f%r" % template).encode("utf-8")
+    quote = fs[-1:]
     tree = cast(JoinedStr, ast_parse(fs, "", 'eval').body)
     start = stop = 0
     for part in tree.values:
-        value = unrepr(fs[part.col_offset:part.end_col_offset].decode("utf-8"), del_quote=False)
+        value = eval((quote+fs[part.col_offset:part.end_col_offset]+quote).decode("utf-8"))
         stop = start + len(value)
         yield FStringPart(start, stop, value, isinstance(part, FormattedValue))
         start = stop

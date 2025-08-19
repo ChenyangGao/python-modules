@@ -3,40 +3,14 @@
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = [
-    "unrepr", "unicode_escape", "unicode_unescape", "replace", 
-    "replace_index", "translate", "text_within", "text_to_dict", 
-    "dict_to_text", 
+    "unicode_escape", "unicode_unescape", "replace", "replace_index", 
+    "translate", "text_within", "text_to_dict", "dict_to_text", 
 ]
 
 from collections.abc import Iterable, Iterator, Mapping
 from codecs import decode, encode
 from itertools import chain, repeat
-from re import (
-    compile as re_compile, escape as re_escape, 
-    Match, Pattern, 
-)
-from typing import Final
-
-
-CRE_REPR_ESCAPE_sub: Final = re_compile(r"(?P<twobs>\\\\)|(?i:[\\0-9a-z]+)").sub
-
-
-def unrepr(
-    s: str, 
-    /, 
-    use_eval: bool = False, 
-    del_quote: bool = True, 
-) -> str:
-    if del_quote:
-        s = s.removeprefix("'").removesuffix("'")
-    if use_eval:
-        return eval("'%s'" % s.replace("'", "\'"))
-    def repl(m: Match, /) -> str:
-        if m.lastgroup == "towbs":
-            return "\\"
-        else:
-            return decode(m[0], "unicode_escape")
-    return CRE_REPR_ESCAPE_sub(repl, s)
+from re import compile as re_compile, escape as re_escape, Pattern
 
 
 def unicode_escape(s: str, /) -> str:

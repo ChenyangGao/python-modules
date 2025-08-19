@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-hashtools"
-version = "0.0.5"
+version = "0.0.6"
 description = "Python hash tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dicttools"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python dictionary tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

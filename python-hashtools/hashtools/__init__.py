@@ -2,12 +2,13 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "HashObj", "ChunkedHash", "make_accumulator", "file_digest", "file_mdigest", 
     "file_digest_async", "file_mdigest_async", 
 ]
 
+from binascii import crc32
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
 from functools import partial
 from hashlib import new as hash_new
@@ -214,6 +215,11 @@ def file_mdigest(
 ) -> tuple[int, list[HashObj | T]]:
     def get_digest(alg, /) -> Callable[[bytes], Any]:
         hashobj: HashObj
+        if alg == "crc32":
+            alg = lambda: crc32
+        elif alg == "ed2k":
+            from ed2k import Ed2kHash
+            hashobj = Ed2kHash()
         if isinstance(alg, str):
             hashobj = hash_new(alg)
         elif isinstance(alg, HashObj):

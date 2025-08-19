@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "get", "get_first", "get_first_item", "get_all", "get_all_items", 
     "pop", "pop_first", "pop_first_item", "pop_all", "pop_all_items", 
@@ -15,6 +15,7 @@ __all__ = [
     "keys", "values", "items", "iter_keys", "iter_values", "iter_items", 
     "dict_swap", "dict_map", "iter_items_map", "dict_group", "dict_merge", 
     "dict_update", "dict_key_to_lower_merge", "dict_key_to_lower_update", 
+    "KeyedDict", "KeyLowerDict", 
 ]
 
 from collections.abc import (
@@ -23,12 +24,18 @@ from collections.abc import (
 )
 from functools import partial
 from itertools import chain
-from typing import cast, overload, Any
+from operator import methodcaller
+from typing import cast, overload, Any, Protocol, Self
 
 from undefined import undefined, Undefined
 
 
 _null = object()
+
+
+class SupportsLower(Protocol):
+    def lower(self, /) -> Self:
+        ...
 
 
 def _lower[T](o: T, /) -> T:
@@ -862,4 +869,54 @@ def dict_key_to_lower_update[K, V](
         *map(key_to_lower, ms), 
         key_to_lower(kwds), 
     )
+
+
+class KeyedDict[K, V, K2](dict[K2, V]):
+    __key__: Callable[[K2], K] = lambda x: x # type: ignore
+
+    def __contains__(self, key, /) -> bool:
+        try:
+            return super().__contains__(type(self).__key__(key))
+        except TypeError:
+            return False
+
+    def __delitem__(self, key: K2, /):
+        return super().__delitem__(type(self).__key__(key))
+
+    def __getitem__(self, key: K2, /) -> V:
+        return super().__getitem__(type(self).__key__(key))
+
+    def __setitem__(self, key: K2, value: V, /):
+        return super().__setitem__(type(self).__key__(key), value)
+
+    def get(self, key: K2, /, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def pop(self, key: K2, /, default=undefined):
+        k = type(self).__key__(key)
+        if default is undefined:
+            return super().pop(k)
+        else:
+            return super().pop(k, default)
+
+    def setdefault(self, key: K2, /, default: V) -> V:
+        return super().setdefault(type(self).__key__(key), default)
+
+    def update(self, /, *args, **kwds):
+        key = type(self).__key__
+        arg: None | Mapping[K2, V] | Iterable[tuple[K2, V]]
+        for arg in args:
+            if arg:
+                for k, v in iter_items(arg):
+                    self[key(k)] = v
+        if kwds:
+            for k, v in kwds.items():
+                self[key(k)] = v
+
+
+class KeyLowerDict[K: SupportsLower, V](KeyedDict[K, V, K]):
+    __key__ = methodcaller("lower")
 

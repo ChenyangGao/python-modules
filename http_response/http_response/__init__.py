@@ -2,12 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = [
-    "headers_get", "get_filename", "get_mimetype", "get_charset", 
-    "get_content_length", "get_length", "get_total_length", 
-    "get_range", "is_chunked", "is_range_request", "parse_response", 
-    "decompress_response", 
+    "get_status_code", "is_timeouterror", "headers_get", "get_filename", 
+    "get_mimetype", "get_charset", "get_content_length", "get_length", 
+    "get_total_length", "get_range", "is_chunked", "is_range_request", 
+    "parse_response", "decompress_response", 
 ]
 
 from codecs import lookup
@@ -29,6 +29,27 @@ CRE_HDR_CD_FNAME_STAR_search: Final = re_compile("(?<=filename\\*=)(?P<charset>[
 CRE_CHARSET_search = re_compile(r"\bcharset\s*=(?P<charset>[^ ;]+)", IGNORECASE).search
 
 Mapping.register(HTTPMessage)
+
+
+def get_status_code(response, /) -> int:
+    for attr in ("status", "code", "status_code"):
+        if isinstance(status := getattr(response, attr, None), int):
+            return status
+    if response := getattr(response, "response", None):
+        return get_status_code(response)
+    return 0
+
+
+def is_timeouterror(exc: BaseException) -> bool:
+    """判断是不是超时异常
+    """
+    exctype = type(exc)
+    if issubclass(exctype, TimeoutError):
+        return True
+    for exctype in exctype.mro():
+        if "Timeout" in exctype.__name__:
+            return True
+    return False
 
 
 def headers_get(response, /, key: bytes | str, default=None, parse=None):

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 11)
+__version__ = (0, 1, 1)
 __all__ = [
     "create_cookie", "create_morsel", "to_cookie", "to_morsel", 
     "cookie_to_morsel", "morsel_to_cookie", "cookies_to_dict", 
@@ -16,7 +16,6 @@ from collections.abc import (
 )
 from copy import copy
 from datetime import datetime
-from functools import partial
 from http.cookiejar import Cookie, CookieJar
 from http.cookies import Morsel, SimpleCookie
 from posixpath import commonpath
@@ -25,7 +24,7 @@ from time import gmtime, strftime, strptime, time
 from typing import cast, Any
 from urllib.request import Request
 
-from dicttools import get, iter_items
+from dicttools import iter_items
 
 
 CRE_COOKIE_SEP_split = re_compile(r";\s*").split
@@ -159,7 +158,7 @@ def create_morsel(
     return morsel
 
 
-def to_cookie(cookie, /, name: str = "") -> Cookie:
+def to_cookie(cookie, /, name: str = "", **kwargs) -> Cookie:
     if isinstance(cookie, str):
         if not name:
             raise ValueError(f"please provide a name for value {cookie!r}")
@@ -173,9 +172,17 @@ def to_cookie(cookie, /, name: str = "") -> Cookie:
         return cookie
     else:
         if isinstance(cookie, Mapping):
-            getval = partial(get, cookie)
+            def getval(key, /, default=None):
+                try:
+                    return cookie[key]
+                except KeyError:
+                    return kwargs.get(key, default)
         else:
-            getval = partial(getattr, cookie)
+            def getval(key, /, default=None):
+                try:
+                    getattr(cookie, key)
+                except AttributeError:
+                    return kwargs.get(key, default)
         name = getval("name", name)
         if not name:
             raise ValueError(f"please provide a name for value {cookie!r}")
@@ -208,7 +215,7 @@ def to_cookie(cookie, /, name: str = "") -> Cookie:
     return create_cookie(**kwargs)
 
 
-def to_morsel(cookie, /, name: str = "") -> Morsel:
+def to_morsel(cookie, /, name: str = "", **kwargs) -> Morsel:
     if isinstance(cookie, str):
         if not name:
             raise ValueError(f"please provide a name for value {cookie!r}")
@@ -222,9 +229,17 @@ def to_morsel(cookie, /, name: str = "") -> Morsel:
         return cookie_to_morsel(cookie)
     else:
         if isinstance(cookie, Mapping):
-            getval = partial(get, cookie)
+            def getval(key, /, default=None):
+                try:
+                    return cookie[key]
+                except KeyError:
+                    return kwargs.get(key, default)
         else:
-            getval = partial(getattr, cookie)
+            def getval(key, /, default=None):
+                try:
+                    getattr(cookie, key)
+                except AttributeError:
+                    return kwargs.get(key, default)
         name = getval("name", name)
         if not name:
             raise ValueError(f"please provide a name for value {cookie!r}")
@@ -336,7 +351,11 @@ def cookies_to_dict(
         def predicate(name, _, /) -> bool:
             return contains(name)
     if isinstance(cookies, str):
-        cookie_it = (cookie.split("=", 1) for cookie in CRE_COOKIE_SEP_split(cookies))
+        cookie_it = (
+            ck.split("=", 1) 
+            for cookie in CRE_COOKIE_SEP_split(cookies) 
+            if (ck := cookie.strip())
+        )
         if predicate is not None:
             return {name: val for name, val in cookie_it if predicate(name, val)}
         return dict(cookie_it)
@@ -400,8 +419,9 @@ def cookies_to_str(
         if predicate is None:
             return cookies
         cookie_it: Iterator[tuple[str, Any]] = (
-            tuple(cookie.split("=", 1)) 
-            for cookie in CRE_COOKIE_SEP_split(cookies)
+            tuple(ck.split("=", 1)) 
+            for cookie in CRE_COOKIE_SEP_split(cookies) 
+            if (ck := cookie.strip())
         )
         if predicate is not None:
             cookie_it = ((name, val) for name, val in cookie_it if predicate(name, val))
@@ -475,16 +495,17 @@ def update_cookies[T: (SimpleCookie, CookieJar)](
     cookies1: T, 
     cookies2, 
     /, 
+    **kwargs, 
 ) -> T:
     if isinstance(cookies1, SimpleCookie):
         if isinstance(cookies2, SimpleCookie):
             morsels: Iterable[tuple[str, Morsel]] = cookies2.items()
         elif isinstance(cookies2, CookieJar):
-            morsels = ((cookie.name, to_morsel(cookie, name=cookie.name)) for cookie in cookies2)
+            morsels = ((cookie.name, to_morsel(cookie, name=cookie.name, **kwargs)) for cookie in cookies2)
         elif isinstance(cookies2, Mapping):
-            morsels = ((k, v if isinstance(v, Morsel) else to_morsel(v, name=k)) for k, v in iter_items(cookies2))
+            morsels = ((k, v if isinstance(v, Morsel) else to_morsel(v, name=k, **kwargs)) for k, v in iter_items(cookies2))
         else:
-            morsels = ((c.key, c) for c in (c if isinstance(c, Morsel) else to_morsel(c) for c in cookies2))
+            morsels = ((c.key, c) for c in (c if isinstance(c, Morsel) else to_morsel(c, **kwargs) for c in cookies2))
         cookies1.update(morsels)
     else:
         if isinstance(cookies2, SimpleCookie):
@@ -492,13 +513,13 @@ def update_cookies[T: (SimpleCookie, CookieJar)](
         elif isinstance(cookies2, CookieJar):
             cookies = cookies2
         elif isinstance(cookies2, Mapping):
-            cookies = (to_cookie(v, name=k) for k, v in iter_items(cookies2))
+            cookies = (to_cookie(v, name=k, **kwargs) for k, v in iter_items(cookies2))
         else:
             cookies = cookies2
         set_cookie = cookies1.set_cookie
         for cookie in cookies:
             if not isinstance(cookie, Cookie):
-                cookie = to_cookie(cookie)
+                cookie = to_cookie(cookie, **kwargs)
             set_cookie(cookie)
     return cookies1
 

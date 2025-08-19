@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-cookietools"
-version = "0.0.11"
+version = "0.1.1"
 description = "Python cookietools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-dicttools = ">=0.0.2"
+python-dicttools = ">=0.0.4"
 
 [build-system]
 requires = ["poetry-core"]

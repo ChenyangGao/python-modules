@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.1.3"
+version = "0.1.4"
 description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,10 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-http_response = ">=0.0.7"
+http_response = ">=0.0.9"
 orjson = "*"
 python-asynctools = ">=0.1.3"
-python-dicttools = ">=0.0.2"
+python-dicttools = ">=0.0.4"
 python-ensure = ">=0.0.1"
 python-filewrap = ">=0.2.8"
 python-texttools = ">=0.0.4"

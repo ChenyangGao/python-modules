@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "SupportsLT", "grouped_mapping", "grouped_mapping_async", 
     "uniq", "uniq_async", "dups", "dups_async", "iter_keyed_dups", 

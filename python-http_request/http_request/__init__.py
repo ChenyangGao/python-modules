@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -12,7 +12,7 @@ __all__ = [
 
 from collections import UserString
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, 
+    AsyncIterable, AsyncIterator, Buffer, Callable, Iterable, Iterator, 
     Mapping, Sequence, 
 )
 from decimal import Decimal
@@ -35,7 +35,7 @@ from yarl import URL
 
 from asynctools import async_map
 from dicttools import dict_map, iter_items
-from ensure import ensure_bytes, ensure_buffer, ensure_str
+from ensure import ensure_bytes as ensure_bytes_, ensure_buffer, ensure_str
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_response import get_charset, get_mimetype
 from orjson import dumps as json_dumps
@@ -82,7 +82,7 @@ def complete_url(
     url: str, 
     /, 
     default_port: int = 0, 
-    clean: bool = False, 
+    params: Any = None, 
 ) -> str:
     if url.startswith("/"):
         url = "http://localhost" + url
@@ -90,15 +90,12 @@ def complete_url(
         url = "http:" + url
     elif url.startswith("://"):
         url = "http" + url
-    if not (clean or default_port):
+    if not (params or default_port):
         if not CRE_URL_SCHEME_match(url):
             url = "http://" + url
         return url
     urlp = urlparse(url)
-    if clean:
-        repl = {"params": "", "query": "", "fragment": ""}
-    else:
-        repl = {}
+    repl = {}
     if not urlp.scheme:
         repl["scheme"] = "http"
     netloc = urlp.netloc
@@ -108,6 +105,10 @@ def complete_url(
         netloc = netloc.removesuffix(":") + f":{default_port}"
     if netloc != urlp.netloc:
         repl["netloc"] = netloc
+    if params and (params := urlencode(params)):
+        if query := urlp.query:
+            params = query + "&" + params
+        repl["query"] = params
     if not repl:
         return url
     return urlunparse(urlp._replace(**repl)).rstrip("/")
@@ -200,6 +201,7 @@ def encode_multipart_data(
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
+    ensure_bytes: bool = False, 
     *, 
     async_: Literal[False] = False, 
 ) -> tuple[dict, Iterator[Buffer]]:
@@ -210,6 +212,7 @@ def encode_multipart_data(
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
+    ensure_bytes: bool = False, 
     *, 
     async_: Literal[True], 
 ) -> tuple[dict, AsyncIterator[Buffer]]:
@@ -219,9 +222,14 @@ def encode_multipart_data(
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
+    ensure_bytes: bool = False, 
     *, 
     async_: bool = False, 
 ) -> tuple[dict, Iterator[Buffer]] | tuple[dict, AsyncIterator[Buffer]]:
+    if ensure_bytes:
+        ensure_value: Callable = ensure_bytes_
+    else:
+        ensure_value = ensure_buffer
     if async_:
         return encode_multipart_data_async(data, files, boundary)
 
@@ -234,7 +242,7 @@ def encode_multipart_data(
         boundary_bytes = bytes(boundary)
         boundary = str(boundary_bytes, "latin-1")
     boundary_line = b"--%s\r\n" % boundary_bytes
-    suffix = ensure_bytes(file_suffix)
+    suffix = ensure_bytes_(file_suffix)
     if suffix and not suffix.startswith(b"."):
         suffix = b"." + suffix
 
@@ -249,12 +257,12 @@ def encode_multipart_data(
                     pass
                 case [_, value, file_type]:
                     if file_type:
-                        headers[b"content-type"] = ensure_bytes(file_type)
+                        headers[b"content-type"] = ensure_bytes_(file_type)
                 case [_, value, file_type, file_headers, *rest]:
                     for k, v in iter_items(file_headers):
-                        headers[ensure_bytes(k).lower()] = ensure_bytes(v)
+                        headers[ensure_bytes_(k).lower()] = ensure_bytes_(v)
                     if file_type:
-                        headers[b"content-type"] = ensure_bytes(file_type)
+                        headers[b"content-type"] = ensure_bytes_(file_type)
         if isinstance(value, (PathLike, SupportsRead)):
             is_file = True
             if isinstance(value, PathLike):
@@ -265,15 +273,15 @@ def encode_multipart_data(
                 file = value
             value = bio_chunk_iter(file)
             if not filename:
-                filename = ensure_bytes(basename(getattr(file, "name", b"") or b""))
+                filename = ensure_bytes_(basename(getattr(file, "name", b"") or b""))
         elif isinstance(value, Buffer):
             pass
         elif isinstance(value, (str, UserString)):
-            value = ensure_bytes(value)
+            value = ensure_bytes_(value)
         elif isinstance(value, Iterable):
-            value = map(ensure_buffer, value)
+            value = map(ensure_value, value)
         else:
-            value = ensure_buffer(value)
+            value = ensure_value(value)
         if is_file:
             if filename:
                 filename = bytes(quote(filename), "ascii")
@@ -282,7 +290,7 @@ def encode_multipart_data(
             else:
                 filename = bytes(uuid4().hex, "ascii") + suffix
             if b"content-type" not in headers:
-                headers[b"content-type"] = ensure_bytes(
+                headers[b"content-type"] = ensure_bytes_(
                     guess_type(str(filename, "latin-1"))[0] or b"application/octet-stream")
             headers[b"content-disposition"] += b'; filename="%s"' % filename
         yield boundary_line
@@ -313,7 +321,12 @@ def encode_multipart_data_async(
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     boundary: None | str = None, 
     file_suffix: str = "", 
+    ensure_bytes: bool = False, 
 ) -> tuple[dict, AsyncIterator[Buffer]]:
+    if ensure_bytes:
+        ensure_value: Callable = ensure_bytes_
+    else:
+        ensure_value = ensure_buffer
     if not boundary:
         boundary = uuid4().hex
         boundary_bytes = bytes(boundary, "ascii")
@@ -323,7 +336,7 @@ def encode_multipart_data_async(
         boundary_bytes = bytes(boundary)
         boundary = str(boundary_bytes, "latin-1")
     boundary_line = b"--%s\r\n" % boundary_bytes
-    suffix = ensure_bytes(file_suffix)
+    suffix = ensure_bytes_(file_suffix)
     if suffix and not suffix.startswith(b"."):
         suffix = b"." + suffix
 
@@ -338,12 +351,12 @@ def encode_multipart_data_async(
                     pass
                 case [_, value, file_type]:
                     if file_type:
-                        headers[b"content-type"] = ensure_bytes(file_type)
+                        headers[b"content-type"] = ensure_bytes_(file_type)
                 case [_, value, file_type, file_headers, *rest]:
                     for k, v in iter_items(file_headers):
-                        headers[ensure_bytes(k).lower()] = ensure_bytes(v)
+                        headers[ensure_bytes_(k).lower()] = ensure_bytes_(v)
                     if file_type:
-                        headers[b"content-type"] = ensure_bytes(file_type)
+                        headers[b"content-type"] = ensure_bytes_(file_type)
         if isinstance(value, (PathLike, SupportsRead)):
             is_file = True
             if isinstance(value, PathLike):
@@ -354,15 +367,15 @@ def encode_multipart_data_async(
                 file = value
             value = bio_chunk_async_iter(file)
             if not filename:
-                filename = ensure_bytes(basename(getattr(file, "name", b"") or b""))
+                filename = ensure_bytes_(basename(getattr(file, "name", b"") or b""))
         elif isinstance(value, Buffer):
             pass
         elif isinstance(value, (str, UserString)):
-            value = ensure_bytes(value)
+            value = ensure_bytes_(value)
         elif isinstance(value, Iterable):
-            value = async_map(ensure_buffer, value)
+            value = async_map(ensure_value, value)
         else:
-            value = ensure_buffer(value)
+            value = ensure_value(value)
         if is_file:
             if filename:
                 filename = bytes(quote(filename), "ascii")
@@ -371,7 +384,7 @@ def encode_multipart_data_async(
             else:
                 filename = bytes(uuid4().hex, "ascii") + suffix
             if b"content-type" not in headers:
-                headers[b"content-type"] = ensure_bytes(
+                headers[b"content-type"] = ensure_bytes_(
                     guess_type(str(filename, "latin-1"))[0] or b"application/octet-stream")
             headers[b"content-disposition"] += b'; filename="%s"' % filename
         yield boundary_line
@@ -432,20 +445,20 @@ def normalize_request_args(
     files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     headers: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
     ensure_ascii: bool = True, 
+    ensure_bytes: bool = False, 
     *, 
     async_: bool = False, 
 ) -> RequestArgs:
+    if ensure_bytes:
+        ensure_value: Callable = ensure_bytes_
+    else:
+        ensure_value = ensure_buffer
     method = ensure_str(method).upper()
     if isinstance(url, SupportsGeturl):
         url = url.geturl()
     elif isinstance(url, URL):
         url = str(url)
-    url = complete_url(ensure_str(url))
-    if params and (params := urlencode(params, ensure_ascii=ensure_ascii)):
-        urlp = urlparse(url)
-        if query := urlp.query:
-            params = query + "&" + params
-        url = urlunparse(urlp._replace(query=params))
+    url = complete_url(ensure_str(url), params=params)
     if ensure_ascii:
         url = ensure_ascii_url(url)
     headers_ = dict_map(
@@ -469,12 +482,12 @@ def normalize_request_args(
         elif isinstance(data, (str, UserString)):
             data = data.encode(charset)
         elif isinstance(data, AsyncIterable):
-            data = async_map(ensure_buffer, data)
+            data = async_map(ensure_value, data)
         elif isinstance(data, Iterator):
             if async_:
-                data = async_map(ensure_buffer, data)
+                data = async_map(ensure_value, data)
             else:
-                data = map(ensure_buffer, data)
+                data = map(ensure_value, data)
         elif mimetype == "application/json":
             if charset == "utf-8":
                 data = json_dumps(data, default=json_default)
@@ -492,12 +505,12 @@ def normalize_request_args(
         if isinstance(json, Buffer):
             data = json
         elif isinstance(json, AsyncIterable):
-            data = async_map(ensure_buffer, json)
+            data = async_map(ensure_value, json)
         elif isinstance(json, Iterator):
             if async_:
-                data = async_map(ensure_buffer, json)
+                data = async_map(ensure_value, json)
             else:
-                data = map(ensure_buffer, json)
+                data = map(ensure_value, json)
         elif charset == "utf-8":
             data = json_dumps(json, default=json_default)
         else:

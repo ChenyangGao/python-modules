@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "http_response"
-version = "0.0.8"
+version = "0.0.9"
 description = "Python http response utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -29,7 +29,7 @@ include = [
 python = "^3.12"
 brotli = "*"
 orjson = "*"
-python-dicttools = ">=0.0.2"
+python-dicttools = ">=0.0.4"
 zstandard = "*"
 
 [build-system]

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "http_client_request"
-version = "0.0.5.1"
+version = "0.0.6"
 description = "http.client request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -34,6 +34,7 @@ python-dicttools = ">=0.0.4"
 python-filewrap = ">=0.2.8"
 python-http_request = ">=0.1.4"
 python-undefined = ">=0.0.3"
+urllib3 = "*"
 yarl = "*"
 
 [build-system]

@@ -2,25 +2,22 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 5)
+__version__ = (0, 1, 6)
 __all__ = ["urlopen", "request", "download"]
 
-from collections import defaultdict, deque, UserString
+from collections import UserString
 from collections.abc import Buffer, Callable, Generator, Iterable, Mapping
 from copy import copy
-from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
 from inspect import isgenerator
 from os import fsdecode, fstat, makedirs, PathLike
 from os.path import abspath, dirname, isdir, join as joinpath
 from shutil import COPY_BUFSIZE # type: ignore
-from socket import socket
 from ssl import SSLContext, _create_unverified_context
 from types import EllipsisType
 from typing import cast, overload, Any, Literal
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit, ParseResult, SplitResult
 from urllib.request import (
     build_opener, AbstractHTTPHandler, BaseHandler, HTTPHandler, 
     HTTPSHandler, HTTPRedirectHandler, OpenerDirector, Request, 
@@ -30,6 +27,7 @@ from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies, update_cookies
 from dicttools import iter_items
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
+from http_client_request import ConnectionPool, HTTPResponse, CONNECTION_POOL
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import (
     decompress_response, get_filename, get_length, is_chunked, is_range_request, 
@@ -42,38 +40,8 @@ from undefined import undefined, Undefined
 
 type string = Buffer | str | UserString
 
-if "__del__" not in HTTPConnection.__dict__:
-    setattr(HTTPConnection, "__del__", HTTPConnection.close)
-if "__del__" not in HTTPSConnection.__dict__:
-    setattr(HTTPSConnection, "__del__", HTTPSConnection.close)
-if "__del__" not in HTTPResponse.__dict__:
-    setattr(HTTPResponse, "__del__", HTTPResponse.close)
 if "__del__" not in OpenerDirector.__dict__:
     setattr(OpenerDirector, "__del__", OpenerDirector.close)
-
-def _close_conn(self, /):
-    fp = self.fp
-    self.fp = None
-    pool = getattr(self, "pool", None)
-    conn = getattr(self, "connection", None)
-    if pool and conn:
-        try:
-            pool.return_connection(conn)
-        except NameError:
-            pass
-    else:
-        fp.close()
-
-setattr(HTTPResponse, "_close_conn", _close_conn)
-
-
-def is_ipv6(host: str, /) -> bool:
-    from ipaddress import _BaseV6, AddressValueError
-    try:
-        _BaseV6._ip_int_from_string(host) # type: ignore
-        return True
-    except AddressValueError:
-        return False
 
 
 class HTTPCookieProcessor(BaseHandler):
@@ -101,82 +69,6 @@ class HTTPCookieProcessor(BaseHandler):
 
     https_request = http_request
     https_response = http_response
-
-
-class ConnectionPool:
-
-    def __init__(
-        self, 
-        /, 
-        pool: None | defaultdict[str, deque[HTTPConnection] | deque[HTTPSConnection]] = None, 
-    ):
-        if pool is None:
-            pool = defaultdict(deque)
-        self.pool = pool
-
-    def __del__(self, /):
-        for dq in self.pool.values():
-            for con in dq:
-                con.close()
-
-    def __repr__(self, /) -> str:
-        cls = type(self)
-        return f"{cls.__module__}.{cls.__qualname__}({self.pool!r})"
-
-    def get_connection(
-        self, 
-        /, 
-        url: str | ParseResult | SplitResult, 
-        timeout: None | float = None, 
-    ) -> HTTPConnection | HTTPSConnection:
-        if isinstance(url, str):
-            url = urlsplit(url)
-        assert url.scheme, "not a complete URL"
-        host = url.hostname or "localhost"
-        if is_ipv6(host):
-            host = f"[{host}]"
-        port = url.port or (443 if url.scheme == 'https' else 80)
-        origin = f"{url.scheme}://{host}:{port}"
-        dq = self.pool[origin]
-        while True:
-            try:
-                con = dq.popleft()
-            except IndexError:
-                break
-            sock = con.sock
-            if not sock or getattr(sock, "_closed"):
-                con.connect()
-            else:
-                sock.setblocking(False)
-                try:
-                    if socket.recv(sock, 1):
-                        con.connect()
-                except BlockingIOError:
-                    pass
-                finally:
-                    sock.setblocking(True)
-            con.timeout = timeout
-            return con
-        if url.scheme == "https":
-            return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)
-        else:
-            return HTTPConnection(url.hostname or "localhost", url.port, timeout=timeout)
-
-    def return_connection(
-        self, 
-        con: HTTPConnection | HTTPSConnection, 
-        /, 
-    ) -> str:
-        if isinstance(con, HTTPSConnection):
-            scheme = "https"
-        else:
-            scheme = "http"
-        host = con.host
-        if is_ipv6(host):
-            host = f"[{host}]"
-        origin = f"{scheme}://{host}:{con.port}"
-        self.pool[origin].append(con) # type: ignore
-        return origin
 
 
 class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
@@ -207,6 +99,10 @@ class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
                 tunnel_headers[proxy_auth_hdr] = headers[proxy_auth_hdr]
                 del headers[proxy_auth_hdr]
             h.set_tunnel(req._tunnel_host, headers=tunnel_headers)
+        else:
+            h._tunnel_host = None
+            h._tunnel_port = None
+            h._tunnel_headers.clear()
         try:
             try:
                 h.request(req.get_method(), req.selector, req.data, headers,
@@ -226,18 +122,15 @@ class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
 
 
 class KeepAliveHTTPHandler(HTTPHandler, KeepAliveBaseHTTPHandler):
-    pass
+    pool: ConnectionPool = CONNECTION_POOL
 
 
 class KeepAliveHTTPSHandler(HTTPSHandler, KeepAliveBaseHTTPHandler):
-    pass
+    pool: ConnectionPool = CONNECTION_POOL
 
 
-_pool = ConnectionPool()
 _http_handler = KeepAliveHTTPHandler()
-_http_handler.pool = _pool
 _https_handler = KeepAliveHTTPSHandler(context=_create_unverified_context())
-_https_handler.pool = _pool
 _cookies = CookieJar()
 _opener: OpenerDirector = build_opener(
     _http_handler, 
@@ -267,6 +160,7 @@ def urlopen(
     cookies: None | CookieJar | BaseCookie = None, 
     timeout: None | Undefined | float = undefined, 
     opener: None | OpenerDirector = _opener, 
+    pool: None | ConnectionPool = None, 
     **_, 
 ) -> HTTPResponse:
     if isinstance(url, Request):
@@ -309,52 +203,62 @@ def urlopen(
             cookies = getattr(opener, "cookies", None)
     if cookies and "cookie" not in headers_:
         headers_["cookie"] = cookies_to_str(cookies)
-    if context is None:
-        if opener is None:
-            handlers.append(copy(_https_handler))
-        else:
-            for i, handler in enumerate(handlers):
-                if isinstance(handler, KeepAliveHTTPSHandler):
-                    break
-                elif isinstance(handler, HTTPSHandler):
-                    handlers[i] = copy(_https_handler)
-                    break
-            else:
-                handlers.append(copy(_https_handler))
-    else:
-        https_handler = KeepAliveHTTPSHandler(context=context)
-        https_handler.pool = _pool
-        if opener is None:
-            handlers.append(https_handler)
-        else:
-            for i, handler in enumerate(handlers):
-                if isinstance(handler, HTTPSHandler):
-                    handlers[i] = https_handler
-                    break
-            else:
-                handlers.append(https_handler)
+    add_handler = handlers.append
     if opener is None:
-        handlers.append(copy(_http_handler))
+        http_handler = copy(_http_handler)
+        if context is None:
+            https_handler = copy(_https_handler)
+        else:
+            https_handler = KeepAliveHTTPSHandler(context=context)
+        if pool is not None:
+            http_handler.pool = pool
+            https_handler.pool = pool
+        add_handler(http_handler)
+        add_handler(https_handler)
     else:
         for i, handler in enumerate(handlers):
-            if isinstance(handler, KeepAliveHTTPHandler):
+            if isinstance(handler, KeepAliveHTTPSHandler):
+                handler = handlers[i] = copy(handler)
+                if context is not None:
+                    setattr(handler, "_context", context)
                 break
-            elif isinstance(handler, HTTPHandler):
-                handlers[i] = copy(_http_handler)
+            elif isinstance(handler, HTTPSHandler):
+                handler = handlers[i] = KeepAliveHTTPSHandler(
+                    debuglevel=getattr(handler, "_debuglevel"), 
+                    context=getattr(handler, "_context") if context is None else context, 
+                )
                 break
         else:
-            handlers.append(copy(_http_handler))
+            handler = copy(_https_handler)
+            if context is not None:
+                setattr(handler, "_context", context)
+            add_handler(handler)
+        if pool is not None:
+            handler.pool = pool
+        for i, handler in enumerate(handlers):
+            if isinstance(handler, KeepAliveHTTPHandler):
+                handler = handlers[i] = copy(handler)
+                break
+            elif isinstance(handler, HTTPHandler):
+                handler = handlers[i] = KeepAliveHTTPHandler(
+                    debuglevel=getattr(handler, "_debuglevel"))
+                break
+        else:
+            handler = copy(_http_handler)
+            add_handler(handler)
+        if pool is not None:
+            handler.pool = pool
     if cookies and (opener is None or all(
         h.cookies is not cookies 
         for h in getattr(opener, "handlers") if isinstance(h, HTTPCookieProcessor)
     )):
-        handlers.append(HTTPCookieProcessor(cookies))
+        add_handler(HTTPCookieProcessor(cookies))
     response_cookies = CookieJar()
     if cookies is None:
         cookies = response_cookies
-    handlers.append(HTTPCookieProcessor(response_cookies))
+    add_handler(HTTPCookieProcessor(response_cookies))
     if not follow_redirects:
-        handlers.append(NoRedirectHandler())
+        add_handler(NoRedirectHandler())
     opener = build_opener(*handlers)
     setattr(opener, "cookies", cookies)
     try:

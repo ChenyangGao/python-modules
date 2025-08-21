@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+from __future__ import annotations
+
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
-__all__ = ["ConnectionPool", "request"]
+__version__ = (0, 0, 6)
+__all__ = ["HTTPConnection", "HTTPSConnection", "HTTPResponse", "ConnectionPool", "request"]
 
 from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
-from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
+from http.client import (
+    HTTPConnection as BaseHTTPConnection, HTTPSConnection as BaseHTTPSConnection, 
+    HTTPResponse as BaseHTTPResponse, 
+)
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
 from inspect import signature
@@ -25,36 +30,70 @@ from dicttools import get_all_items
 from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import decompress_response, parse_response
+from urllib3 import HTTPResponse as Urllib3HTTPResponse, HTTPHeaderDict
 from undefined import undefined, Undefined
 from yarl import URL
 
 
 type string = Buffer | str | UserString
 
-HTTP_CONNECTION_KWARGS: Final = signature(HTTPConnection).parameters.keys()
-HTTPS_CONNECTION_KWARGS: Final = signature(HTTPSConnection).parameters.keys()
+HTTP_CONNECTION_KWARGS: Final = signature(BaseHTTPConnection).parameters.keys()
+HTTPS_CONNECTION_KWARGS: Final = signature(BaseHTTPSConnection).parameters.keys()
 
-if "__del__" not in HTTPConnection.__dict__:
-    setattr(HTTPConnection, "__del__", HTTPConnection.close)
-if "__del__" not in HTTPSConnection.__dict__:
-    setattr(HTTPSConnection, "__del__", HTTPSConnection.close)
-if "__del__" not in HTTPResponse.__dict__:
-    setattr(HTTPResponse, "__del__", HTTPResponse.close)
 
-def _close_conn(self, /):
-    fp = self.fp
-    self.fp = None
-    pool = getattr(self, "pool", None)
-    conn = getattr(self, "connection", None)
-    if pool and conn:
+class HTTPResponse(BaseHTTPResponse):
+    pool: None | ConnectionPool = None
+    connection: None | HTTPConnection | HTTPSConnection = None
+
+    def __del__(self, /):
+        self.close()
+
+    def _close_conn(self, /):
+        fp = self.fp
+        setattr(self, "fp", None)
         try:
-            pool.return_connection(conn)
-        except NameError:
-            pass
-    else:
-        fp.close()
+            pool = self.pool
+            connection = self.connection
+            if pool and connection:
+                pool.return_connection(connection)
+        except AttributeError:
+            fp.close()
 
-setattr(HTTPResponse, "_close_conn", _close_conn)
+    def get_urllib3_response(self, /) -> Urllib3HTTPResponse:
+        return Urllib3HTTPResponse(
+            body=self, 
+            headers=HTTPHeaderDict(self.headers.items()), 
+            status=self.status, 
+            version=self.version, 
+            version_string="HTTP/%s" % (self.version or "?"), 
+            reason=self.reason, 
+            preload_content=False, 
+            decode_content=True, 
+            original_response=self, 
+            msg=self.headers, 
+            request_method=getattr(self, "method", None), 
+            request_url=self.url, 
+        )
+
+
+class HTTPConnection(BaseHTTPConnection):
+    response_class = HTTPResponse
+
+    def __del__(self, /):
+        self.close()
+
+    def getresponse(self, /) -> HTTPResponse:
+        return cast(HTTPResponse, super().getresponse())
+
+
+class HTTPSConnection(BaseHTTPSConnection):
+    response_class = HTTPResponse
+
+    def __del__(self, /):
+        self.close()
+
+    def getresponse(self, /) -> HTTPResponse:
+        return cast(HTTPResponse, super().getresponse())
 
 
 def get_host_pair(url: None | str, /) -> None | tuple[str, None | int]:
@@ -125,6 +164,8 @@ class ConnectionPool:
                         con.connect()
                 except BlockingIOError:
                     pass
+                except ConnectionResetError:
+                    con.connect()
                 finally:
                     sock.setblocking(True)
             con.timeout = timeout
@@ -149,6 +190,8 @@ class ConnectionPool:
         origin = f"{scheme}://{host}:{con.port}"
         self.pool[origin].append(con) # type: ignore
         return origin
+
+    _put_conn = return_connection
 
 
 CONNECTION_POOL = ConnectionPool()
@@ -242,7 +285,7 @@ def request[T](
     raise_for_status: bool = True, 
     cookies: None | CookieJar | BaseCookie = None, 
     proxies: None | str | dict[str, str] = None, 
-    pool: None | Undefined | ConnectionPool = undefined,  
+    pool: None | Undefined | ConnectionPool = undefined, 
     *, 
     parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
     **request_kwargs, 
@@ -306,10 +349,16 @@ def request[T](
             connection = HTTPSConnection(**dict(get_all_items(request_kwargs, *HTTPS_CONNECTION_KWARGS)))
             if http_proxy:
                 connection.set_tunnel(*http_proxy)
+            else:
+                setattr(connection, "_tunnel_host", None)
+                setattr(connection, "_tunnel_port", None)
         else:
             connection = HTTPConnection(**dict(get_all_items(request_kwargs, *HTTP_CONNECTION_KWARGS)))
             if https_proxy:
                 connection.set_tunnel(*https_proxy)
+            else:
+                setattr(connection, "_tunnel_host", None)
+                setattr(connection, "_tunnel_port", None)
         connection.request(
             method, 
             urlunsplit(urlp._replace(scheme="", netloc="")), 
@@ -320,6 +369,7 @@ def request[T](
         if pool and headers_.get("connection") == "keep-alive":
             setattr(response, "pool", pool)
         setattr(response, "connection", connection)
+        setattr(response, "method", method)
         setattr(response, "url", url)
         setattr(response, "cookies", response_cookies)
         extract_cookies(response_cookies, url, response)

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 3)
 __all__ = [
     "create_cookie", "create_morsel", "to_cookie", "to_morsel", 
     "cookie_to_morsel", "morsel_to_cookie", "cookies_to_dict", 
@@ -97,7 +97,7 @@ def create_cookie(
         "rest": {"HttpOnly": None}, 
         "rfc2109": False, 
     }
-    result.update(e for e in kwargs.items() if e[0] in result)
+    result.update((k, v) for k, v in kwargs.items() if k in result if v)
     result["port_specified"] = bool(result["port"])
     result["domain_specified"] = bool(result["domain"])
     result["domain_initial_dot"] = result["domain"].startswith(".")

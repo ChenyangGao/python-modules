@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.1.4"
-description = "Python http response utils."
+version = "0.1.6"
+description = "Python http request utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
@@ -29,11 +29,15 @@ include = [
 python = "^3.12"
 http_response = ">=0.0.9"
 orjson = "*"
+python-argtools = ">=0.0.2"
 python-asynctools = ">=0.1.3"
+python-cookietools = ">=0.1.4"
 python-dicttools = ">=0.0.4"
 python-ensure = ">=0.0.1"
 python-filewrap = ">=0.2.8"
-python-texttools = ">=0.0.4"
+python-texttools = ">=0.0.5"
+python-undefined = ">=0.0.3"
+yarl = "*"
 
 [build-system]
 requires = ["poetry-core"]

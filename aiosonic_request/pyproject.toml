@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "http_client_request"
-version = "0.0.8"
-description = "ttp.client request extension."
+name = "aiosonic_request"
+version = "0.0.1"
+description = "aiosonic request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/http_client_request"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/http_client_request"
-keywords = ["http.client", "request"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/aiosonic_request"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/aiosonic_request"
+keywords = ["aiosonic", "request"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,15 +27,14 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
+aiosonic = "*"
 http_response = ">=0.0.9"
 python-argtools = ">=0.0.2"
+python-asynctools = ">=0.1.3.4"
 python-cookietools = ">=0.1.3"
 python-dicttools = ">=0.0.4"
 python-filewrap = ">=0.2.8"
 python-http_request = ">=0.1.4"
-python-property = ">=0.0.3"
-python-undefined = ">=0.0.3"
-urllib3 = "*"
 yarl = "*"
 
 [build-system]
@@ -43,4 +42,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "http_client_request"
+include = "aiosonic_request"

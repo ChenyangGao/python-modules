@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 4)
+__version__ = (0, 1, 6)
 __all__ = [
     "SupportsGeturl", "url_origin", "complete_url", "ensure_ascii_url", 
     "urlencode", "cookies_str_to_dict", "headers_str_to_dict_by_lines", 
@@ -31,7 +31,6 @@ from typing import (
 )
 from urllib.parse import quote, urlparse, urlunparse
 from uuid import uuid4
-from yarl import URL
 
 from asynctools import async_map
 from dicttools import dict_map, iter_items
@@ -40,6 +39,7 @@ from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_response import get_charset, get_mimetype
 from orjson import dumps as json_dumps
 from texttools import text_to_dict
+from yarl import URL
 
 
 type string = Buffer | str | UserString
@@ -479,6 +479,11 @@ def normalize_request_args(
     elif data is not None:
         if isinstance(data, Buffer):
             pass
+        elif isinstance(data, SupportsRead):
+            if async_:
+                data = bio_chunk_async_iter(data)
+            else:
+                data = bio_chunk_iter(data)
         elif isinstance(data, (str, UserString)):
             data = data.encode(charset)
         elif isinstance(data, AsyncIterable):
@@ -504,6 +509,11 @@ def normalize_request_args(
     elif json is not None:
         if isinstance(json, Buffer):
             data = json
+        elif isinstance(json, SupportsRead):
+            if async_:
+                data = bio_chunk_async_iter(json)
+            else:
+                data = bio_chunk_iter(json)
         elif isinstance(json, AsyncIterable):
             data = async_map(ensure_value, json)
         elif isinstance(json, Iterator):

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "ResponseWrapper", "HTTPStatusError", "request", 
     "request_sync", "request_async", 
@@ -12,7 +12,8 @@ __all__ = [
 
 from collections import UserString
 from collections.abc import (
-    Awaitable, Buffer, Callable, Iterable, Mapping, 
+    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, 
+    Iterable, Iterator, Mapping, 
 )
 from contextlib import aclosing, closing
 from copy import copy
@@ -46,6 +47,7 @@ from yarl import URL
 type string = Buffer | str | UserString
 
 _INIT_CLIENT_KWARGS: Final  = signature(ConnectionPool).parameters.keys()
+_INIT_ASYNC_CLIENT_KWARGS: Final  = signature(AsyncConnectionPool).parameters.keys()
 
 if "__del__" not in ConnectionPool.__dict__:
     setattr(ConnectionPool, "__del__", ConnectionPool.close)
@@ -218,12 +220,13 @@ def request_sync[T](
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
     if session is None:
-        session = ConnectionPool(**dict(get_all_items(request_kwargs, *_INIT_CLIENT_KWARGS)))
+        session = ConnectionPool(**dict(get_all_items(
+            request_kwargs, *_INIT_CLIENT_KWARGS)))
         setattr(session, "cookies", CookieJar())
     if cookies is None:
         cookies = getattr(session, "cookies", None)
     if isinstance(data, PathLike):
-        data = bio_chunk_iter(open(data, "rb"))
+        data = open(data, "rb")
     if isinstance(data, Buffer):
         data = bytes(data)
     body: None | bytes | Iterable[Buffer] | SupportsRead[bytes] = data
@@ -240,6 +243,7 @@ def request_sync[T](
                 url=url, 
                 params=params, 
                 headers=headers, 
+                ensure_bytes=True, 
             )
         else:
             request_args = normalize_request_args(
@@ -250,8 +254,9 @@ def request_sync[T](
                 files=files, 
                 json=json, 
                 headers=headers, 
+                ensure_bytes=True, 
             )
-            body = data = cast(None | bytes | Iterable[Buffer], request_args["data"])
+            body = data = cast(None | bytes | Iterator[Buffer], request_args["data"])
         request = Request(
             method=enforce_bytes(request_args["method"], name="method"), 
             url=enforce_url(request_args["url"], name="url"), 
@@ -307,7 +312,7 @@ def request_sync[T](
                         request.method = b"GET"
                     body = None
                     request.stream = enforce_stream(None, name="content")
-                if no_default_cookie_header and ("set-cookie" in response.headers or "set-cookie2" in response.headers):
+                if no_default_cookie_header:
                     cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
                     request.headers[-1] = (b"cookie", cookie_bytes)
                 request.headers = include_request_headers(raw_headers, url=request.url, content=None)
@@ -425,32 +430,45 @@ async def request_async[T](
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
     if session is None:
-        session = AsyncConnectionPool(**dict(get_all_items(request_kwargs, *_INIT_CLIENT_KWARGS)))
+        session = AsyncConnectionPool(**dict(get_all_items(
+            request_kwargs, *_INIT_ASYNC_CLIENT_KWARGS)))
         setattr(session, "cookies", CookieJar())
     if cookies is None:
         cookies = getattr(session, "cookies", None)
+    if isinstance(data, PathLike):
+        data = open(data, "rb")
+    if isinstance(data, Buffer):
+        data = bytes(data)
+    body: None | bytes | Iterable[Buffer] | AsyncIterable[Buffer] | SupportsRead[bytes] = data
     if isinstance(url, Request):
         request = copy(url)
-        request.headers = include_request_headers(request.headers, url=request.url, content=None)
-    else:
-        if isinstance(data, PathLike):
-            data = bio_chunk_async_iter(open(data, "rb"))
-        elif isinstance(data, SupportsRead):
+        if isinstance(data, SupportsRead):
             data = bio_chunk_async_iter(data)
-        request_args = normalize_request_args(
-            method=method, 
-            url=url, 
-            params=params, 
-            data=data, 
-            files=files, 
-            json=json, 
-            headers=headers, 
-            async_=True, 
-        )
-        data = request_args["data"]
-        if isinstance(data, Buffer):
-            if not isinstance(data, bytes):
-                data = bytes(data)
+        request.stream  = enforce_stream(data, name="content")
+        request.headers = include_request_headers(request.headers, url=request.url, content=data)
+    else:
+        if isinstance(data, (Buffer, SupportsRead)):
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                headers=headers, 
+                ensure_bytes=True, 
+                async_=True, 
+            )
+        else:
+            request_args = normalize_request_args(
+                method=method, 
+                url=url, 
+                params=params, 
+                data=data, 
+                files=files, 
+                json=json, 
+                headers=headers, 
+                ensure_bytes=True, 
+                async_=True, 
+            )
+            body = data = cast(None | bytes | AsyncIterator[Buffer], request_args["data"])
         request = Request(
             method=enforce_bytes(request_args["method"], name="method"), 
             url=enforce_url(request_args["url"], name="url"), 
@@ -485,20 +503,36 @@ async def request_async[T](
             else:
                 cookies.extract_cookies(response, HTTPRequest(request_url)) # type: ignore
         response_cookies.extract_cookies(response, HTTPRequest(request_url)) # type: ignore
-        if follow_redirects and response.is_redirect():
-            request = copy(request)
-            if response.status == 303:
-                request.method = b"GET"
-                request.stream = enforce_stream(None, name="content")
-            request_url = response.headers["location"]
-            request.url = enforce_url(request_url, name="url")
-            if no_default_cookie_header and ("set-cookie" in response.headers or "set-cookie2" in response.headers):
-                cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
-                request.headers[-1] = (b"cookie", cookie_bytes)
-            request.headers = include_request_headers(raw_headers, url=request.url, content=None) # type: ignore
-            await response.aread()
-            await response.aclose()
-            continue
+        status_code = response.status
+        if follow_redirects and 300 <= status_code < 400:
+            if location := response.headers.get("location"):
+                request = copy(request)
+                request_url = urljoin(request_url, location)
+                request.url = enforce_url(request_url, name="url")
+                if body and status_code in (307, 308):
+                    if isinstance(body, SupportsRead):
+                        try:
+                            from asynctools import ensure_async
+                            await ensure_async(body.seek)(0) # type: ignore
+                            data = bio_chunk_async_iter(body)
+                            request.stream = enforce_stream(data, name="content")
+                        except Exception:
+                            warn(f"unseekable-stream: {body!r}")
+                    elif not isinstance(body, Buffer):
+                        warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+                else:
+                    if status_code == 303:
+                        request.method = b"GET"
+                    body = None
+                    request.stream = enforce_stream(None, name="content")
+                if no_default_cookie_header:
+                    cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
+                    request.headers[-1] = (b"cookie", cookie_bytes)
+                request.headers = include_request_headers(raw_headers, url=request.url, content=None)
+                if request.method != "HEAD":
+                    await response.aread()
+                await response.aclose()
+                continue
         elif raise_for_status:
             response.raise_for_status()
         if parse is None:

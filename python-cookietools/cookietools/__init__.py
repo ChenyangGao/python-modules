@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = [
     "create_cookie", "create_morsel", "to_cookie", "to_morsel", 
     "cookie_to_morsel", "morsel_to_cookie", "cookies_to_dict", 
@@ -307,7 +307,7 @@ def morsel_to_cookie(cookie: Morsel, /) -> Cookie:
                 expires = None
     elif max_age := cookie.get("max-age"):
         try:
-            expires = int(max_age)
+            max_age = int(max_age)
         except ValueError:
             raise TypeError(f"max-age: {max_age} must be integer")
         if max_age >= 0:

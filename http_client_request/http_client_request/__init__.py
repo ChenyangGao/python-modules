@@ -4,9 +4,15 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
-__all__ = ["HTTPConnection", "HTTPSConnection", "HTTPResponse", "ConnectionPool", "request"]
+__version__ = (0, 0, 8)
+__all__ = [
+    "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
+    "ConnectionPool", "request", 
+]
 
+import socket
+
+from array import array
 from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.client import (
@@ -15,9 +21,12 @@ from http.client import (
 )
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
+from io import BufferedReader
 from inspect import signature
 from os import PathLike
-from socket import socket
+from select import select
+from socket import socket as Socket
+from ssl import SSLWantReadError
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
@@ -30,6 +39,7 @@ from dicttools import get_all_items
 from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import decompress_response, parse_response
+from property import funcproperty
 from urllib3 import HTTPResponse as Urllib3HTTPResponse, HTTPHeaderDict
 from undefined import undefined, Undefined
 from yarl import URL
@@ -41,15 +51,106 @@ HTTP_CONNECTION_KWARGS: Final = signature(BaseHTTPConnection).parameters.keys()
 HTTPS_CONNECTION_KWARGS: Final = signature(BaseHTTPSConnection).parameters.keys()
 
 
+def get_host_pair(url: None | str, /) -> None | tuple[str, None | int]:
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    urlp = urlsplit(url)
+    return urlp.hostname or "localhost", urlp.port
+
+
+def is_ipv6(host: str, /) -> bool:
+    from ipaddress import _BaseV6, AddressValueError
+    try:
+        _BaseV6._ip_int_from_string(host) # type: ignore
+        return True
+    except AddressValueError:
+        return False
+
+
+def sock_buf_readable(sock: Socket, /) -> bool:
+    rlist, *_ = select([sock], (), (), 0)
+    return bool(rlist)
+
+
+try:
+    from fcntl import ioctl
+    from termios import FIONREAD
+
+    def sock_bufsize(sock, /) -> int:
+        sock_size = array("i", [0])
+        ioctl(sock, FIONREAD, sock_size)
+        return sock_size[0]
+except ImportError:
+    from ctypes import byref, c_ulong, WinDLL # type: ignore
+    ws2_32 = WinDLL("ws2_32")
+    def sock_bufsize(sock, /) -> int:
+        FIONREAD = 0x4004667f
+        b = c_ulong(0)
+        ws2_32.ioctlsocket(sock.fileno(), FIONREAD, byref(b))
+        return b.value
+
+
 class HTTPResponse(BaseHTTPResponse):
+    _pos: int = 0
+    method: str
     pool: None | ConnectionPool = None
     connection: None | HTTPConnection | HTTPSConnection = None
 
     def __del__(self, /):
         self.close()
 
+    @funcproperty
+    def _fp(self, /) -> BufferedReader:
+        return self.fp
+
+    @property
+    def buffer_size(self, /) -> int:
+        fp = self._fp
+        sock = fp.raw._sock
+        sock.setblocking(False)            
+        try:
+            cache_size = len(fp.peek() or b"")
+            while True:
+                buffer_size = cache_size + sock_bufsize(sock)
+                if cache_size == (cache_size := len(fp.peek() or b"")):
+                    return buffer_size
+        except (BlockingIOError, SSLWantReadError):
+            return 0
+        finally:
+            sock.setblocking(True)
+
+    @property
+    def unbuffer_size(self, /) -> int:
+        method = self.__dict__.get("method", "").upper()
+        content_length = self.length
+        if method == "HEAD" or content_length == 0:
+            return 0
+        if content_length:
+            return content_length - self.tell() - self.buffer_size
+        sock = self._fp.raw._sock
+        if sock_bufsize(sock) == sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF):
+            return -1
+        else:
+            return 0
+
+    @property
+    def unread_size(self, /) -> int:
+        method = self.__dict__.get("method", "").upper()
+        content_length = self.length
+        if method == "HEAD" or content_length == 0:
+            return 0
+        sock = self._fp.raw._sock
+        if content_length:
+            return content_length - self.tell()
+        elif sock_bufsize(sock) == sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF):
+            return -1
+        else:
+            return self.buffer_size
+
     def _close_conn(self, /):
-        fp = self.fp
+        fp = self._fp = self.fp
         setattr(self, "fp", None)
         try:
             pool = self.pool
@@ -75,6 +176,39 @@ class HTTPResponse(BaseHTTPResponse):
             request_url=self.url, 
         )
 
+    def read(self, /, amt=None) -> bytes:
+        data = super().read(amt)
+        self._pos += len(data)
+        return data
+
+    def read1(self, /, n=-1) -> bytes:
+        data = super().read1(n)
+        self._pos += len(data)
+        return data
+
+    def readinto(self, /, b) -> int:
+        count = super().readinto(b)
+        self._pos += count
+        return count
+
+    def readinto1(self, buffer, /) -> int:
+        count = super().readinto1(buffer)
+        self._pos += count
+        return count
+
+    def readline(self, limit=-1) -> bytes:
+        data = super().readline(limit)
+        self._pos += len(data)
+        return data
+
+    def readlines(self, hint=-1, /) -> list[bytes]:
+        ls = super().readlines(hint)
+        self._pos += sum(map(len, ls))
+        return ls
+
+    def tell(self, /) -> int:
+        return self._pos
+
 
 class HTTPConnection(BaseHTTPConnection):
     response_class = HTTPResponse
@@ -82,8 +216,19 @@ class HTTPConnection(BaseHTTPConnection):
     def __del__(self, /):
         self.close()
 
+    @property
+    def response(self, /) -> None | HTTPResponse:
+        return self._HTTPConnection__response # type: ignore
+
     def getresponse(self, /) -> HTTPResponse:
         return cast(HTTPResponse, super().getresponse())
+
+    def putrequest(self, /, *args, **kwds):
+        while True:
+            try:
+                return super().putrequest(*args, **kwds)
+            except (ConnectionResetError, BrokenPipeError):
+                self.connect()
 
 
 class HTTPSConnection(BaseHTTPSConnection):
@@ -92,26 +237,19 @@ class HTTPSConnection(BaseHTTPSConnection):
     def __del__(self, /):
         self.close()
 
+    @property
+    def response(self, /) -> None | HTTPResponse:
+        return self._HTTPConnection__response # type: ignore
+
     def getresponse(self, /) -> HTTPResponse:
         return cast(HTTPResponse, super().getresponse())
 
-
-def get_host_pair(url: None | str, /) -> None | tuple[str, None | int]:
-    if not url:
-        return None
-    if not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    urlp = urlsplit(url)
-    return urlp.hostname or "localhost", urlp.port
-
-
-def is_ipv6(host: str, /) -> bool:
-    from ipaddress import _BaseV6, AddressValueError
-    try:
-        _BaseV6._ip_int_from_string(host) # type: ignore
-        return True
-    except AddressValueError:
-        return False
+    def putrequest(self, /, *args, **kwds):
+        while True:
+            try:
+                return super().putrequest(*args, **kwds)
+            except (ConnectionResetError, BrokenPipeError):
+                self.connect()
 
 
 class ConnectionPool:
@@ -154,21 +292,27 @@ class ConnectionPool:
                 con = dq.popleft()
             except IndexError:
                 break
+            con.timeout = timeout
             sock = con.sock
+            resp = con.response
             if not sock or getattr(sock, "_closed"):
                 con.connect()
+            elif resp and 0 < resp.unbuffer_size <= 1024 * 1024:
+                try:
+                    resp.read()
+                except (ConnectionResetError, BrokenPipeError):
+                    con.connect()
             else:
                 sock.setblocking(False)
                 try:
-                    if socket.recv(sock, 1):
+                    if Socket.recv(sock, 1):
                         con.connect()
                 except BlockingIOError:
                     pass
-                except ConnectionResetError:
+                except (ConnectionResetError, BrokenPipeError):
                     con.connect()
                 finally:
                     sock.setblocking(True)
-            con.timeout = timeout
             return con
         if url.scheme == "https":
             return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)

@@ -1,4 +1,4 @@
-# Python http response utils.
+# Python http request utils.
 
 ## Installation
 
@@ -12,4 +12,5 @@ pip install -U python-http_request
 
 ```python
 import http_request
+import http_request.extension
 ```

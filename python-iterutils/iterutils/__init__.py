@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 8)
+__version__ = (0, 2, 10)
 __all__ = [
     "Yield", "YieldFrom", "GenStep", "GenStepIter", "iterable", 
     "async_iterable", "run_gen_step", "run_gen_step_iter", 
@@ -11,8 +11,8 @@ __all__ = [
     "chunked", "foreach", "async_foreach", "through", "async_through", 
     "flatten", "async_flatten", "collect", "async_collect", 
     "group_collect", "async_group_collect", "iter_unique", 
-    "async_iter_unique", "wrap_iter", "wrap_aiter", "acc_step", 
-    "cut_iter", "bfs_gen", "context", "backgroud_loop", 
+    "async_iter_unique", "wrap_iter", "wrap_aiter", "peek_iter", "peek_aiter", 
+    "acc_step", "cut_iter", "bfs_gen", "context", "backgroud_loop", 
 ]
 
 from asyncio import create_task, sleep as async_sleep
@@ -588,22 +588,30 @@ def chain[T](
     iterable: Iterable[T], 
     /, 
     *iterables: Iterable[T], 
-    threaded: bool = False, 
+    threaded: Literal[False] = False, 
 ) -> Iterator[T]:
+    ...
+@overload
+def chain[T](
+    iterable: Iterable[T], 
+    /, 
+    *iterables: Iterable[T] | AsyncIterable[T], 
+    threaded: Literal[True], 
+) -> AsyncIterator[T]:
     ...
 @overload
 def chain[T](
     iterable: AsyncIterable[T], 
     /, 
     *iterables: Iterable[T] | AsyncIterable[T], 
-    threaded: bool = False, 
+    threaded: Literal[False, True] = False, 
 ) -> AsyncIterator[T]:
     ...
 def chain[T](
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     *iterables: Iterable[T] | AsyncIterable[T], 
-    threaded: bool = False, 
+    threaded: Literal[False, True] = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
     if (not threaded and 
         isinstance(iterable, Iterable) and 
@@ -650,7 +658,17 @@ def chunked[T](
     iterable: Iterable[T], 
     n: int = 1, 
     /, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False] = False, 
+) -> Iterator[Sequence[T]]:
+    ...
+@overload
+def chunked[T](
+    iterable: Iterable[T], 
+    n: int = 1, 
+    /, 
+    *, 
+    threaded: Literal[True], 
 ) -> Iterator[Sequence[T]]:
     ...
 @overload
@@ -658,14 +676,16 @@ def chunked[T](
     iterable: AsyncIterable[T], 
     n: int = 1, 
     /, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> AsyncIterator[Sequence[T]]:
     ...
 def chunked[T](
     iterable: Iterable[T] | AsyncIterable[T], 
     n: int = 1, 
     /, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> Iterator[Sequence[T]] | AsyncIterator[Sequence[T]]:
     """
     """
@@ -700,7 +720,8 @@ def foreach(
         else:
             for arg in iterable:
                 value(arg)
-    return async_foreach(value, iterable, *iterables, threaded=threaded)
+    else:
+        return async_foreach(value, iterable, *iterables, threaded=threaded)
 
 
 async def async_foreach(
@@ -731,7 +752,7 @@ def through(
     """
     if threaded or not isinstance(iterable, Iterable):
         return async_through(iterable, take_while, threaded=threaded)
-    if take_while is None:
+    elif take_while is None:
         for _ in iterable:
             pass
     else:
@@ -767,7 +788,17 @@ def flatten(
     iterable: Iterable, 
     /, 
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False] = False, 
+) -> Iterator:
+    ...
+@overload
+def flatten(
+    iterable: Iterable, 
+    /, 
+    exclude_types: type | tuple[type, ...] = (Buffer, str), 
+    *, 
+    threaded: Literal[True], 
 ) -> Iterator:
     ...
 @overload
@@ -775,14 +806,15 @@ def flatten(
     iterable: AsyncIterable, 
     /, 
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> AsyncIterator:
     ...
 def flatten(
     iterable: Iterable | AsyncIterable, 
     /, 
     exclude_types: type | tuple[type, ...] = (Buffer, str), 
-    threaded: bool = False, 
+    threaded: Literal[False, True] = False, 
 ) -> Iterator | AsyncIterator:
     """
     """
@@ -818,7 +850,8 @@ def collect[K, V](
     iterable: Iterable[tuple[K, V]] | Mapping[K, V], 
     /, 
     rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False] = False, 
 ) -> MutableMapping[K, V]:
     ...
 @overload
@@ -826,15 +859,35 @@ def collect[T](
     iterable: Iterable[T], 
     /, 
     rettype: Callable[[Iterable[T]], Collection[T]] = list, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False] = False, 
 ) -> Collection[T]:
+    ...
+@overload
+def collect[K, V](
+    iterable: Iterable[tuple[K, V]] | Mapping[K, V], 
+    /, 
+    rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
+    *, 
+    threaded: Literal[True], 
+) -> Coroutine[Any, Any, MutableMapping[K, V]]:
+    ...
+@overload
+def collect[T](
+    iterable: Iterable[T], 
+    /, 
+    rettype: Callable[[Iterable[T]], Collection[T]] = list, 
+    *, 
+    threaded: Literal[True], 
+) -> Coroutine[Any, Any, Collection[T]]:
     ...
 @overload
 def collect[K, V](
     iterable: AsyncIterable[tuple[K, V]], 
     /, 
     rettype: Callable[[Iterable[tuple[K, V]]], MutableMapping[K, V]], 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> Coroutine[Any, Any, MutableMapping[K, V]]:
     ...
 @overload
@@ -842,14 +895,16 @@ def collect[T](
     iterable: AsyncIterable[T], 
     /, 
     rettype: Callable[[Iterable[T]], Collection[T]] = list, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> Coroutine[Any, Any, Collection[T]]:
     ...
 def collect(
     iterable: Iterable | AsyncIterable | Mapping, 
     /, 
     rettype: Callable[[Iterable], Collection] = list, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> Collection | Coroutine[Any, Any, Collection]:
     """
     """
@@ -996,22 +1051,33 @@ def iter_unique[T](
     iterable: Iterable[T], 
     /, 
     seen: None | MutableSet = None, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False] = False, 
 ) -> Iterator[T]:
+    ...
+@overload
+def iter_unique[T](
+    iterable: Iterable[T], 
+    /, 
+    seen: None | MutableSet = None, 
+    *, 
+    threaded: Literal[True], 
+) -> AsyncIterator[T]:
     ...
 @overload
 def iter_unique[T](
     iterable: AsyncIterable[T], 
     /, 
     seen: None | MutableSet = None, 
-    threaded: bool = False, 
+    *, 
+    threaded: Literal[False, True] = False, 
 ) -> AsyncIterator[T]:
     ...
 def iter_unique[T](
     iterable: Iterable[T] | AsyncIterable[T], 
     /, 
     seen: None | MutableSet = None, 
-    threaded: bool = False, 
+    threaded: Literal[False, True] = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
     """
     """
@@ -1051,7 +1117,19 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
+    *, 
+    threaded: Literal[False] = False, 
 ) -> Iterator[T]:
+    ...
+@overload
+def wrap_iter[T](
+    iterable: Iterable[T], 
+    /, 
+    callprev: None | Callable[[T], Any] = None, 
+    callnext: None | Callable[[T], Any] = None, 
+    *, 
+    threaded: Literal[True], 
+) -> AsyncIterator[T]:
     ...
 @overload
 def wrap_iter[T](
@@ -1059,6 +1137,7 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
+    threaded: Literal[False, True] = False, 
 ) -> AsyncIterator[T]:
     ...
 def wrap_iter[T](
@@ -1066,14 +1145,16 @@ def wrap_iter[T](
     /, 
     callprev: None | Callable[[T], Any] = None, 
     callnext: None | Callable[[T], Any] = None, 
+    threaded: bool = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
     """
     """
-    if not isinstance(iterable, Iterable):
+    if threaded or not isinstance(iterable, Iterable):
         return wrap_aiter(
             iterable, 
             callprev=callprev, 
             callnext=callnext, 
+            threaded=threaded, 
         )
     if not callable(callprev):
         callprev = None
@@ -1102,6 +1183,55 @@ async def wrap_aiter[T](
         callprev and await callprev(e)
         yield e
         callnext and await callnext(e)
+
+
+@overload
+def peek_iter[T](
+    iterable: Iterable[T], 
+    /, 
+    threaded: Literal[False] = False, 
+) -> None | Iterator[T]:
+    ...
+@overload
+def peek_iter[T](
+    iterable: Iterable[T], 
+    /, 
+    threaded: Literal[True], 
+) -> Coroutine[Any, Any, None | AsyncIterator[T]]:
+    ...
+@overload
+def peek_iter[T](
+    iterable: AsyncIterable[T], 
+    /, 
+    threaded: Literal[False, True] = False, 
+) -> Coroutine[Any, Any, None | AsyncIterator[T]]:
+    ...
+def peek_iter[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    /, 
+    threaded: Literal[False, True] = False, 
+) -> None | Iterator[T] | Coroutine[Any, Any, None | AsyncIterator[T]]:
+    if threaded or isinstance(iterable, AsyncIterable):
+        return peek_aiter(iterable, threaded=threaded)
+    try:
+        it = iter(iterable)
+        first = next(it)
+        return chain((first,), it)
+    except StopIteration:
+        return None
+
+
+async def peek_aiter[T](
+    iterable: Iterable[T] | AsyncIterable[T], 
+    /, 
+    threaded: Literal[False, True] = False, 
+) -> None | AsyncIterator[T]:
+    try:
+        it = ensure_aiter(iterable, threaded=threaded)
+        first = await anext(it)
+        return async_chain((first,), it)
+    except StopAsyncIteration:
+        return None
 
 
 def acc_step(

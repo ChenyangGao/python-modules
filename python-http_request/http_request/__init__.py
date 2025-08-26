@@ -537,3 +537,5 @@ def normalize_request_args(
         "headers": headers_
     }
 
+# TODO: 尽量要得到 content-length
+# TODO: 支持对请求体进行压缩，增加一个参数用来处理（而不是判断 content-encoding，除非不是迭代器）

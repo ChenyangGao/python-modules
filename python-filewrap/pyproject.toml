@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-filewrap"
-version = "0.2.8.1"
+version = "0.2.8.2"
 description = "Python file wrappers."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -27,7 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-asynctools = ">=0.1"
+python-asynctools = ">=0.1.3"
 python-property = ">=0.0.3"
 
 [build-system]

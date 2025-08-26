@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "http_client_request"
 version = "0.0.8"
-description = "ttp.client request extension."
+description = "http.client request extension."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"

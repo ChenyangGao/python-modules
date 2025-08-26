@@ -18,7 +18,6 @@ from io import (
 )
 from os import fstat, stat, PathLike
 from shutil import COPY_BUFSIZE # type: ignore
-from sys import exc_info
 from typing import cast, overload, Any, BinaryIO, Literal, Self
 from types import MappingProxyType
 from warnings import warn
@@ -27,7 +26,6 @@ from asynctools import ensure_async, run_async
 from filewrap import AsyncBufferedReader, AsyncTextIOWrapper
 from http_response import get_filename, get_length, get_range, get_total_length, is_chunked, is_range_request
 from property import funcproperty
-from urlopen import urlopen
 
 
 def get_filesize(
@@ -83,6 +81,7 @@ def get_filesize(
     return total
 
 
+# TODO: 默认使用 http.client 而不是 urlopen
 class HTTPFileReader(RawIOBase, BinaryIO):
     url: str | Callable[[], str]
     response: Any
@@ -114,7 +113,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         elif start < 0:
             headers["range"] = f"bytes={start}"
         if urlopen is None:
-            urlopen = globals()["urlopen"]
+            from http_request.extension.request import urlopen
         if callable(url):
             geturl = url
             def url():
@@ -580,7 +579,7 @@ class AsyncHTTPFileReader(HTTPFileReader):
         elif start < 0:
             headers["range"] = f"bytes={start}"
         if urlopen is None:
-            urlopen = globals()["urlopen"]
+            from http_request.extension.request import urlopen
         if callable(url):
             geturl = url
             async def url() -> str:

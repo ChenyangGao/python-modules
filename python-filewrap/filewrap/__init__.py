@@ -826,10 +826,9 @@ def get_bom(encoding: str, /) -> bytes:
 
 
 def buffer_length(b: Buffer, /) -> int:
-    try:
-        return len(b) # type: ignore
-    except:
-        return len(memoryview(b))
+    if isinstance(b, (bytes, bytearray, memoryview)):
+        return len(b)
+    return len(memoryview(b))
 
 
 def bio_chunk_iter(

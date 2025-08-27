@@ -25,7 +25,7 @@ from urllib.request import (
 
 from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies, update_cookies
-from dicttools import iter_items
+from dicttools import dict_map, iter_items
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
 from http_client_request import ConnectionPool, HTTPResponse, CONNECTION_POOL
 from http_request import normalize_request_args, SupportsGeturl
@@ -86,38 +86,36 @@ class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
             origin = "https://" + host
         else:
             origin = "http://" + host
-        h = pool.get_connection(origin, timeout=req.timeout)
-        h.set_debuglevel(self._debuglevel) # type: ignore
-        headers = dict(req.unredirected_hdrs)
-        headers.update({k: v for k, v in req.headers.items()
-                        if k not in headers})
+        con = pool.get_connection(origin, timeout=req.timeout)
+        con.set_debuglevel(self._debuglevel) # type: ignore
+        headers = dict_map(req.unredirected_hdrs or (), key=str.lower)
+        headers.update({k0: v for k, v in req.headers.items()
+                        if (k0 := k.lower()) not in headers})
         headers.setdefault("connection", "keep-alive")
         if req._tunnel_host:
             tunnel_headers = {}
-            proxy_auth_hdr = "Proxy-Authorization"
+            proxy_auth_hdr = "proxy-authorization"
             if proxy_auth_hdr in headers:
                 tunnel_headers[proxy_auth_hdr] = headers[proxy_auth_hdr]
                 del headers[proxy_auth_hdr]
-            h.set_tunnel(req._tunnel_host, headers=tunnel_headers)
+            con.set_tunnel(req._tunnel_host, headers=tunnel_headers)
         else:
-            h._tunnel_host = None
-            h._tunnel_port = None
-            h._tunnel_headers.clear()
+            con.set_tunnel()
         try:
             try:
-                h.request(req.get_method(), req.selector, req.data, headers,
-                          encode_chunked=req.has_header('Transfer-encoding'))
+                con.request(req.get_method(), req.selector, req.data, headers,
+                            encode_chunked=req.has_header('Transfer-encoding'))
             except OSError as err:
                 raise URLError(err)
-            r = h.getresponse()
+            r = con.getresponse()
         except:
-            pool.return_connection(h)
+            pool.return_connection(con)
             raise
         r.url = req.get_full_url()
         r.msg = r.reason
         if headers.get("connection") == "keep-alive":
             setattr(r, "pool", pool)
-        setattr(r, "connection", h)
+        setattr(r, "connection", con)
         return r
 
 

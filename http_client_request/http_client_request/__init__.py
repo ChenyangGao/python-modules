@@ -273,54 +273,56 @@ class HTTPResponse(BaseHTTPResponse):
         return self._pos
 
 
-class HTTPConnection(BaseHTTPConnection):
-    response_class = HTTPResponse
+class HTTPConnectionMixin:
 
-    def __del__(self, /):
+    def __del__(self: Any, /):
         self.close()
 
-    @property
-    def response(self, /) -> None | HTTPResponse:
-        return self._HTTPConnection__response # type: ignore
-
-    def connect(self, /):
-        super().connect()
+    def connect(self: Any, /):
+        super().connect() # type: ignore
         set_keepalive(self.sock)
 
-    def getresponse(self, /) -> HTTPResponse:
-        return cast(HTTPResponse, super().getresponse())
+    @property
+    def response(self: Any, /) -> None | HTTPResponse:
+        return self._HTTPConnection__response
 
-    def putrequest(self, /, *args, **kwds):
-        while True:
+    def getresponse(self: Any, /) -> HTTPResponse:
+        return cast(HTTPResponse, super().getresponse()) # type: ignore
+
+    def putrequest(self: Any, /, *args, **kwds):
+        excs: list[Exception] = []
+        for _ in range(5):
             try:
-                return super().putrequest(*args, **kwds)
-            except (ConnectionResetError, BrokenPipeError):
+                return super().putrequest(*args, **kwds) # type: ignore
+            except (ConnectionResetError, BrokenPipeError) as e:
+                excs.append(e)
+                self.connect()
+        raise ExceptionGroup("too many retries", excs)
+
+    def set_tunnel(self: Any, /, host=None, port=None, headers=None):
+        has_sock = self.sock is not None
+        if not host:
+            if self._tunnel_host:
+                if has_sock:
+                    self.close()
+                self._tunnel_host = self._tunnel_port = None
+                self._tunnel_headers.clear()
+                if has_sock:
+                    self.connect()
+        elif (self._tunnel_host, self._tunnel_port) != self._get_hostport(host, port):
+            if has_sock:
+                self.close()
+            super().set_tunnel(host, port, headers) # type: ignore
+            if has_sock:
                 self.connect()
 
 
-class HTTPSConnection(BaseHTTPSConnection):
+class HTTPConnection(HTTPConnectionMixin, BaseHTTPConnection):
     response_class = HTTPResponse
 
-    def __del__(self, /):
-        self.close()
 
-    @property
-    def response(self, /) -> None | HTTPResponse:
-        return self._HTTPConnection__response # type: ignore
-
-    def connect(self, /):
-        super().connect()
-        set_keepalive(self.sock)
-
-    def getresponse(self, /) -> HTTPResponse:
-        return cast(HTTPResponse, super().getresponse())
-
-    def putrequest(self, /, *args, **kwds):
-        while True:
-            try:
-                return super().putrequest(*args, **kwds)
-            except (ConnectionResetError, BrokenPipeError):
-                self.connect()
+class HTTPSConnection(HTTPConnectionMixin, BaseHTTPSConnection):
+    response_class = HTTPResponse
 
 
 class ConnectionPool:
@@ -562,18 +564,17 @@ def request[T](
             connection = pool.get_connection(urlp, timeout=request_kwargs.get("timeout"))
         elif urlp.scheme == "https":
             connection = HTTPSConnection(**dict(get_all_items(request_kwargs, *HTTPS_CONNECTION_KWARGS)))
-            if http_proxy:
-                connection.set_tunnel(*http_proxy)
-            else:
-                setattr(connection, "_tunnel_host", None)
-                setattr(connection, "_tunnel_port", None)
         else:
             connection = HTTPConnection(**dict(get_all_items(request_kwargs, *HTTP_CONNECTION_KWARGS)))
+        if urlp.scheme == "https":
             if https_proxy:
                 connection.set_tunnel(*https_proxy)
-            else:
-                setattr(connection, "_tunnel_host", None)
-                setattr(connection, "_tunnel_port", None)
+            elif pool:
+                connection.set_tunnel()
+        elif http_proxy:
+            connection.set_tunnel(*http_proxy)
+        elif pool:
+            connection.set_tunnel()
         connection.request(
             method, 
             urlunsplit(urlp._replace(scheme="", netloc="")), 

@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 2, 8)
+__version__ = (0, 2, 9)
 __all__ = [
     "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", "buffer_length", 
@@ -864,6 +864,8 @@ def bio_chunk_iter(
                 if size < chunksize:
                     del buf[size:]
                 length = readinto(buf)
+                if not length:
+                    return
                 if callback:
                     callback(length)
                 if length < buffer_length(buf):
@@ -887,6 +889,8 @@ def bio_chunk_iter(
                 readsize = min(chunksize, size)
                 chunk = read(readsize)
                 length = buffer_length(chunk)
+                if not length:
+                    return
                 if callback:
                     callback(length)
                 yield chunk
@@ -932,6 +936,8 @@ async def bio_chunk_async_iter(
                 if size < chunksize:
                     del buf[size:]
                 length = await readinto(buf)
+                if not length:
+                    return
                 if callback:
                     await callback(length)
                 if length < buffer_length(buf):
@@ -955,6 +961,8 @@ async def bio_chunk_async_iter(
                 readsize = min(chunksize, size)
                 chunk = await read(readsize)
                 length = buffer_length(chunk)
+                if not length:
+                    return
                 if callback:
                     await callback(length)
                 yield chunk

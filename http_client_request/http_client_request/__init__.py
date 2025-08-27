@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 8)
+__version__ = (0, 0, 9)
 __all__ = [
     "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
-    "ConnectionPool", "request", 
+    "ConnectionPool", "request", "set_keepalive", 
 ]
 
 import socket
@@ -24,6 +24,7 @@ from http.cookies import BaseCookie
 from io import BufferedReader
 from inspect import signature
 from os import PathLike
+from platform import system
 from select import select
 from socket import socket as Socket
 from ssl import SSLWantReadError
@@ -72,6 +73,68 @@ def is_ipv6(host: str, /) -> bool:
 def sock_buf_readable(sock: Socket, /) -> bool:
     rlist, *_ = select([sock], (), (), 0)
     return bool(rlist)
+
+
+def set_keepalive_linux(
+    sock: Socket, 
+    after_idle_sec: int = 1, 
+    interval_sec: int = 5, 
+    max_fails: int = 5, 
+):
+    """Set TCP keepalive on an open socket on Linux.
+    """
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec) # type: ignore
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+
+
+def set_keepalive_osx(
+    sock: Socket, 
+    after_idle_sec: int = 1, 
+    interval_sec: int = 5, 
+    max_fails: int = 5, 
+):
+    """Set TCP keepalive on an open socket on MaxOSX.
+    """
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, after_idle_sec) # type: ignore
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+
+
+def set_keepalive_win(
+    sock: Socket, 
+    after_idle_sec: int = 1, 
+    interval_sec: int = 5, 
+    max_fails: int = 5, 
+):
+    """Set TCP keepalive on an open socket on Windows.
+    """
+    sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, after_idle_sec * 1000, interval_sec * 1000)) # type: ignore
+
+
+def set_keepalive(
+    sock: Socket, 
+    after_idle_sec: int = 1, 
+    interval_sec: int = 3, 
+    max_fails: int = 5, 
+):
+    """Set TCP keepalive on an open socket on multiple platforms.
+
+    It activates after `after_idle_sec` second of idleness,
+    then sends a keepalive ping once every `interval_sec` seconds,
+    and closes the connection after `max_fails` failed ping (max_fails), or 15 seconds.
+    """
+    platform = system()
+    match platform:
+        case "Darwin":
+            return set_keepalive_osx(sock, after_idle_sec, interval_sec, max_fails)
+        case "Windows":
+            return set_keepalive_win(sock, after_idle_sec, interval_sec, max_fails)
+        case "Linux":
+            return set_keepalive_linux(sock, after_idle_sec, interval_sec, max_fails)
+    raise RuntimeError(f"unsupport platform {platform!r}")
 
 
 try:
@@ -220,6 +283,10 @@ class HTTPConnection(BaseHTTPConnection):
     def response(self, /) -> None | HTTPResponse:
         return self._HTTPConnection__response # type: ignore
 
+    def connect(self, /):
+        super().connect()
+        set_keepalive(self.sock)
+
     def getresponse(self, /) -> HTTPResponse:
         return cast(HTTPResponse, super().getresponse())
 
@@ -240,6 +307,10 @@ class HTTPSConnection(BaseHTTPSConnection):
     @property
     def response(self, /) -> None | HTTPResponse:
         return self._HTTPConnection__response # type: ignore
+
+    def connect(self, /):
+        super().connect()
+        set_keepalive(self.sock)
 
     def getresponse(self, /) -> HTTPResponse:
         return cast(HTTPResponse, super().getresponse())

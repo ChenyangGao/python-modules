@@ -104,7 +104,7 @@ class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
         try:
             try:
                 con.request(req.get_method(), req.selector, req.data, headers,
-                            encode_chunked=req.has_header('Transfer-encoding'))
+                            encode_chunked=req.has_header("transfer-encoding"))
             except OSError as err:
                 raise URLError(err)
             r = con.getresponse()

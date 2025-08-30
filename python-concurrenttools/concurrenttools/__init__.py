@@ -2,24 +2,28 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 0)
+__version__ = (0, 1, 3)
 __all__ = [
     "thread_batch", "thread_pool_batch", "async_batch", 
     "threaded", "run_as_thread", "asynchronized", "run_as_async", 
-    "threadpool_map", "taskgroup_map", "conmap", "Return", 
+    "threadpool_map", "taskgroup_map", "conmap", "iter_pages", 
+    "Return", 
 ]
 
 from asyncio import (
-    ensure_future, get_event_loop, BaseEventLoop, CancelledError, Future as AsyncFuture, 
-    Queue as AsyncQueue, Semaphore as AsyncSemaphore, TaskGroup, 
+    ensure_future, get_event_loop, BaseEventLoop, CancelledError as AsyncCancelledError, 
+    Future as AsyncFuture, Queue as AsyncQueue, Semaphore as AsyncSemaphore, TaskGroup, 
 )
+from collections import deque
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable, 
+    AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Generator, Iterable, 
     Iterator, Mapping, 
 )
-from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Executor, Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial, update_wrapper
-from inspect import isawaitable, iscoroutinefunction, signature
+from inspect import isawaitable, iscoroutinefunction, signature, Signature
+from itertools import count, repeat
 from os import cpu_count
 from queue import Queue, SimpleQueue, Empty
 from _thread import start_new_thread
@@ -27,7 +31,7 @@ from threading import Event, Lock, Semaphore, Thread
 from typing import cast, overload, Any, ContextManager, Literal
 
 from argtools import argcount
-from asynctools import async_map, async_zip, run_async
+from asynctools import async_map, async_zip, ensure_coroutine, run_async
 from decotools import optional
 
 
@@ -40,6 +44,17 @@ if "__del__" not in TaskGroup.__dict__:
 class Return:
     def __init__(self, value, /):
         self.value = value
+
+
+def has_keyword_async(request: Callable | Signature, /) -> bool:
+    if callable(request):
+        try:
+            request = signature(request)
+        except (ValueError, TypeError):
+            return False
+    params = request.parameters
+    param = params.get("async_")
+    return bool(param and param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY))
 
 
 def thread_batch[T, V](
@@ -188,7 +203,7 @@ async def async_batch[T, V](
         except KeyboardInterrupt:
             raise
         except BaseException as e:
-            raise CancelledError from e
+            raise AsyncCancelledError from e
     async with TaskGroup() as tg:
         create_task = tg.create_task
         submit = lambda task, /: create_task(works(task))
@@ -244,6 +259,7 @@ def asynchronized[**Args, T](
     func: Callable[Args, T], 
     /, 
     loop: None | BaseEventLoop = None, 
+    new_thread: bool = False, 
     executor: Literal[False, None] | Executor = None, 
 ) -> Callable[Args, AsyncFuture[T]]:
     def run_in_thread(loop, future, args, kwargs, /):
@@ -253,8 +269,8 @@ def asynchronized[**Args, T](
             loop.call_soon_threadsafe(future.set_exception, e)
     def wrapper(*args: Args.args, **kwargs: Args.kwargs) -> AsyncFuture[T]:
         nonlocal loop
-        if iscoroutinefunction(func):
-            return ensure_future(func(*args, **kwargs), loop=loop)
+        if not new_thread or iscoroutinefunction(func):
+            return ensure_future(ensure_coroutine(func(*args, **kwargs)), loop=loop)
         if loop is None:
             loop = cast(BaseEventLoop, get_event_loop())
         if executor is False:
@@ -421,12 +437,9 @@ def conmap[T](
     kwargs: Mapping = {}, 
     async_: Literal[False, True] = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
-    map: Callable = taskgroup_map if async_ else threadpool_map
-    params = signature(func).parameters
-    if ((param := params.get("async_")) and 
-        (param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY))
-    ):
+    if has_keyword_async(func):
         kwargs = {"async_": async_, **kwargs}
+    map: Callable = taskgroup_map if async_ else threadpool_map
     return map(
         func, 
         it, 
@@ -436,3 +449,292 @@ def conmap[T](
         kwargs=kwargs, 
     )
 
+
+@overload
+def run_gen_step[T](
+    gen_step: Generator[Any, Any, T] | Callable[[], Generator[Any, Any, T]], 
+    async_: Literal[False] = False, 
+) -> T:
+    ...
+@overload
+def run_gen_step[T](
+    gen_step: Generator[Any, Any, T] | Callable[[], Generator[Any, Any, T]], 
+    async_: Literal[True], 
+) -> Coroutine[Any, Any, T]:
+    ...
+def run_gen_step[T](
+    gen_step: Generator[Any, Any, T] | Callable[[], Generator[Any, Any, T]], 
+    async_: bool = False, 
+) -> T | Coroutine[Any, Any, T]:
+    if callable(gen_step):
+        gen_step = gen_step()
+    send = gen_step.send
+    if async_:
+        throw = gen_step.throw
+        async def run():
+            try:
+                step: Awaitable = send(None)
+                while True:
+                    try:
+                        val: Any = await step
+                    except BaseException as e:
+                        step = throw(e)
+                    else:
+                        step = send(val)
+            except StopIteration as e:
+                return e.value
+        return run()
+    else:
+        try:
+            step: Any = None
+            while True:
+                step = send(step)
+        except StopIteration as e:
+            return e.value
+
+
+@overload
+def iter_pages[T](
+    func: Callable[[int], T], 
+    is_last_page: Callable[[T], bool], 
+    next_page: int | Callable[[], int] | Iterable[int] = 1, 
+    max_workers: None | int = 1, 
+    unordered: bool = True, 
+    *, 
+    async_: Literal[False] = False, 
+) -> Iterator[T]:
+    ...
+@overload
+def iter_pages[T](
+    func: Callable[[int], Awaitable[T]], 
+    is_last_page: Callable[[T], bool], 
+    next_page: int | Callable[[], int] | Iterable[int] = 1, 
+    max_workers: None | int = 1, 
+    unordered: bool = True, 
+    *, 
+    async_: Literal[True], 
+) -> AsyncIterator[T]:
+    ...
+def iter_pages[T](
+    func: Callable[[int], T] | Callable[[int], Awaitable[T]], 
+    is_last_page: Callable[[T], bool], 
+    next_page: int | Callable[[], int] | Iterable[int] = 1, 
+    max_workers: None | int = 1, 
+    unordered: bool = True, 
+    *, 
+    async_: Literal[False, True] = False, 
+) -> Iterator[T] | AsyncIterator[T]:
+    """分页执行操作
+
+    :param func: 操作函数
+    :param is_last_page: 根据响应判断是否下一页，执行后可以报错（如果报错 StopIteration，则丢弃这次结果，并视为最后一页）
+    :param next_page: 获取下一页的编号
+    :param max_workers: 最大并发数，如果为 None 或 <= 0，则自动确定
+    :param unordered: 是否允许乱序
+    :param async_: 是否异步
+
+    :return: 迭代器，产生每次操作的响应
+    """
+    if iscoroutinefunction(func):
+        async_ = True
+    if has_keyword_async(func):
+        func = partial(func, async_=async_) # type: ignore
+    if max_workers is None or max_workers <= 0:
+        max_workers = 20 if async_ else None
+    if isinstance(next_page, int):
+        next_page = count(next_page).__next__
+    elif not callable(next_page):
+        next_page = iter(next_page).__next__
+    if max_workers == 1:
+        if async_:
+            async def async_gen():
+                not_last = True
+                while not_last:
+                    resp: T = await cast(Callable[[int], Awaitable[T]], func)(next_page())
+                    try:
+                        not_last = not is_last_page(resp)
+                    except StopIteration:
+                        not_last = False
+                    yield resp
+            return async_gen()
+        else:
+            def gen():
+                not_last = True
+                while not_last:
+                    resp: T = cast(Callable[[int], T], func)(next_page())
+                    try:
+                        not_last = not is_last_page(resp)
+                    except StopIteration:
+                        not_last = False
+                    yield resp
+            return gen()
+    sentinel = object()
+    max_page: None | int = None
+    if unordered:
+        if async_:
+            q: AsyncQueue | SimpleQueue = AsyncQueue()
+        else:
+            q = SimpleQueue()
+        get, put = q.get, q.put_nowait
+        task_list: list = []
+        task_page: list[int] = []
+        task_ids: set[int] = set()
+        discard_task_id = task_ids.discard
+        def countdown(task_id, /):
+            task_list[task_id] = None
+            discard_task_id(task_id)
+            if not task_ids:
+                put(sentinel)
+        def request_unordered(task_id, /):
+            nonlocal max_page
+            try:
+                page = next_page()
+                while max_page is None or page < max_page:
+                    task_page[task_id] = page
+                    resp: T = yield func(page)
+                    try:
+                        is_last = is_last_page(resp)
+                    except BaseException as e:
+                        is_last = True
+                        if isinstance(e, StopIteration):
+                            put(resp)
+                        else:
+                            put(e)
+                    if is_last:
+                        max_page = page
+                        for i, p in enumerate(task_page):
+                            task = task_list[i]
+                            if task and p > page:
+                                task.cancel()
+                                countdown(i)
+                    page = next_page()
+            except BaseException as e:
+                put(e)
+            finally:
+                countdown(task_id)
+        if async_:
+            async def async_gen():
+                n = cast(int, max_workers)
+                async with TaskGroup() as tg:
+                    create_task = tg.create_task
+                    task_ids.update(range(n))
+                    task_page.extend(repeat(0, n))
+                    for i in range(n):
+                        task_list.append(create_task(run_gen_step(request_unordered(i), True)))
+                    while True:
+                        resp = await get()
+                        if resp is sentinel:
+                            break
+                        elif isinstance(resp, (CancelledError, AsyncCancelledError)):
+                            continue
+                        elif isinstance(resp, BaseException):
+                            raise resp
+                        yield resp
+            return async_gen()
+        else:
+            def gen():
+                executor = ThreadPoolExecutor(max_workers)
+                try:
+                    submit = executor.submit
+                    n = executor._max_workers
+                    task_ids.update(range(n))
+                    task_page.extend(repeat(0, n))
+                    for i in range(n):
+                        task_list.append(submit(run_gen_step, request_unordered(i)))
+                    while True:
+                        resp = get()
+                        if resp is sentinel:
+                            break
+                        elif isinstance(resp, (CancelledError, AsyncCancelledError)):
+                            continue
+                        elif isinstance(resp, BaseException):
+                            raise resp
+                        yield resp
+                finally:
+                    executor.shutdown(False, cancel_futures=True)
+            return gen()
+    else:
+        @dataclass(slots=True)
+        class PageTask:
+            page: int
+            task: Any
+            def __bool__(self, /) -> bool:
+                return self.task is not None
+            def cancel(self, /):
+                if self:
+                    self.task.cancel()
+                    self.task = None
+        dq: deque[PageTask] = deque()
+        push, pop = dq.append, dq.pop
+        def request_ordered(page, add_task, /):
+            nonlocal max_page
+            if max_page is not None and page > max_page:
+                return sentinel
+            resp: T = yield func(page)
+            exc: None | BaseException = None
+            try:
+                is_last = is_last_page(resp)
+            except StopIteration:
+                is_last = True
+            except BaseException as e:
+                is_last = True
+                exc = e
+            if is_last and (max_page is None or page < max_page):
+                max_page = page
+                for page_task in dq:
+                    if page_task and page_task.page > page:
+                        page_task.cancel()
+            if exc is not None:
+                raise exc
+            elif not is_last:
+                if async_:
+                    add_task(next_page())
+                else:
+                    with lock:
+                        add_task(next_page())
+            return resp
+        if async_:
+            async def async_gen():
+                async with TaskGroup() as tg:
+                    create_task = tg.create_task
+                    add_task: Callable[[int], Any] = lambda page: push(PageTask(
+                        page, 
+                        create_task(run_gen_step(request_ordered(page, add_task), True)), 
+                    ))
+                    try:
+                        for _ in range(cast(int, max_workers)):
+                            add_task(next_page())
+                        while dq:
+                            if page_task := pop():
+                                resp = await page_task.task
+                                if resp is not sentinel:
+                                    yield resp
+                    except (CancelledError, AsyncCancelledError):
+                        pass
+            return async_gen()
+        else:
+            lock = Lock()
+            def gen():
+                executor = ThreadPoolExecutor(max_workers)
+                try:
+                    n = executor._max_workers
+                    submit = executor.submit
+                    add_task: Callable[[int], Any] = lambda page: push(PageTask(
+                        page, 
+                        submit(run_gen_step, request_ordered(page, add_task)), 
+                    ))
+                    try:
+                        for _ in range(n):
+                            add_task(next_page())
+                        while dq:
+                            if page_task := pop():
+                                resp = page_task.task.result()
+                                if resp is not sentinel:
+                                    yield resp
+                    except (CancelledError, AsyncCancelledError):
+                        pass
+                finally:
+                    executor.shutdown(False, cancel_futures=True)
+            return gen()
+
+# TODO: iter_pages_with_cooldown

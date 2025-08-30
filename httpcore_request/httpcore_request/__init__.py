@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 6)
 __all__ = [
     "ResponseWrapper", "HTTPStatusError", "request", 
     "request_sync", "request_async", 
@@ -17,6 +17,7 @@ from collections.abc import (
 )
 from contextlib import aclosing, closing
 from copy import copy
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.client import HTTPMessage
 from http.cookiejar import CookieJar
@@ -70,8 +71,8 @@ if "__del__" not in AsyncConnectionPool.__dict__:
     #             return run_async(self.aclose())
     # setattr(Response, "__del__", __del__)
 
-_DEFAULT_CLIENT = ConnectionPool(http2=True, max_connections=128)
-_DEFAULT_ASYNC_CLIENT = AsyncConnectionPool(http2=True, max_connections=128)
+_DEFAULT_CLIENT = ConnectionPool(http2=True, max_connections=128, retries=5)
+_DEFAULT_ASYNC_CLIENT = AsyncConnectionPool(http2=True, max_connections=128, retries=5)
 _DEFAULT_COOKIE_JAR = CookieJar()
 setattr(_DEFAULT_CLIENT, "cookies", _DEFAULT_COOKIE_JAR)
 setattr(_DEFAULT_ASYNC_CLIENT, "cookies", _DEFAULT_COOKIE_JAR)
@@ -83,7 +84,7 @@ class ResponseWrapper:
         self.request = request
         self.response = response
         headers = self.headers = HTTPMessage()
-        for key, val in self.response.headers:
+        for key, val in response.headers:
             headers.set_raw(str(key, "latin-1"), str(val, "latin-1"))
 
     def __del__(self, /):
@@ -105,6 +106,10 @@ class ResponseWrapper:
     def __repr__(self, /):
         return f"{type(self).__qualname__}({self.response!r})"
 
+    @property
+    def code(self, /) -> int:
+        return self.response.status
+
     def info(self, /) -> HTTPMessage:
         return self.headers
 
@@ -114,21 +119,40 @@ class ResponseWrapper:
     def raise_for_status(self, /):
         status_code = self.response.status
         if status_code >= 400:
-            raise HTTPStatusError(HTTPStatus(status_code).description, self.request, self)
+            request = self.request
+            raise HTTPStatusError(
+                code=status_code, 
+                method=str(request.method, "ascii"), 
+                url=str(bytes(request.url), "ascii"), 
+                reason=HTTPStatus(status_code).phrase, 
+                message=HTTPStatus(status_code).description, 
+                headers=list(self.headers.items()), 
+                request=self.request, 
+                response=self, 
+            )
 
 
-class HTTPStatusError(Exception):
+@dataclass(frozen=True)
+class HTTPStatusError(OSError):
+    code: int
+    method: str
+    url: str
+    reason: str
+    message: str
+    headers: dict[str, str] | list[tuple[str, str]]
+    request: Request
+    response: ResponseWrapper | Response
 
-    def __init__(
-        self, 
-        /, 
-        message: str, 
-        request: Request, 
-        response: ResponseWrapper | Response, 
-    ):
-        self.message = message
-        self.request = request
-        self.response = response
+    @property
+    def args(self, /) -> tuple: # type: ignore
+        return tuple(getattr(self, a) for a in self.__match_args__)
+
+    @property
+    def kwargs(self, /) -> dict[str, Any]:
+        return {a: getattr(self, a) for a in self.__match_args__}
+
+    def __str__(self, /) -> str:
+        return "".join(f"\n    {a}={getattr(self, a)!r}" for a in self.__match_args__)
 
 
 @overload
@@ -145,9 +169,9 @@ def request_sync(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> ResponseWrapper:
     ...
 @overload
 def request_sync(
@@ -165,7 +189,7 @@ def request_sync(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> ResponseWrapper:
+) -> bytes:
     ...
 @overload
 def request_sync(
@@ -355,9 +379,9 @@ async def request_async(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> ResponseWrapper:
     ...
 @overload
 async def request_async(
@@ -375,7 +399,7 @@ async def request_async(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> ResponseWrapper:
+) -> bytes:
     ...
 @overload
 async def request_async(

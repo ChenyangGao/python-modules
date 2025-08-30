@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-iterutils"
-version = "0.2.10.1"
-description = "Python another itertools."
+name = "blacksheep-rich-log"
+version = "0.0.2"
+description = "BlackSheep access log middleware."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-iterutils"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-iterutils"
-keywords = ["iterable", "iterutils"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/@blacksheep-extensions/blacksheep-rich-log"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/@blacksheep-extensions/blacksheep-rich-log"
+keywords = ["blacksheep", "middleware"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,13 +27,13 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-asynctools = ">=0.1.3.4"
-python-texttools = ">=0.0.3"
-python-undefined = ">=0.0.3"
+blacksheep = "*"
+orjson = "*"
+rich = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "iterutils"
+include = "blacksheep_rich_log"

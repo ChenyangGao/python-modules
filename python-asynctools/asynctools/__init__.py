@@ -213,8 +213,6 @@ def run_async(
             context=context, 
         )
         if loop.is_running():
-            # keep ref to task
-            task.add_done_callback(lambda _=task, /: None) # type: ignore
             return task
         else:
             return loop.run_until_complete(task)

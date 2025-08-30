@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 3)
 __all__ = ["SqliteDict", "SqliteTableDict"]
 
 from collections.abc import Callable, Iterator, MutableMapping
@@ -18,6 +18,13 @@ register_adapter(list, dumps)
 register_converter("JSON", loads)
 
 
+def call_with_lock(lock, func, /, *args, **kwds):
+    if lock is None:
+        return func(*args, **kwds)
+    with lock:
+        return func(*args, **kwds)
+
+
 class SqliteDict(MutableMapping):
 
     def __init__(
@@ -26,8 +33,13 @@ class SqliteDict(MutableMapping):
         /, 
         dumps: None | Callable = None, 
         loads: None | Callable = None, 
+        key_dumps: None | Callable = None, 
+        key_loads: None | Callable = None, 
+        value_dumps: None | Callable = None, 
+        value_loads: None | Callable = None, 
         timeout: int | float = float("inf"), 
         uri: bool = False, 
+        lock=None, 
     ):
         self.con = con = connect(
             dbfile, 
@@ -42,27 +54,57 @@ CREATE TABLE IF NOT EXISTS dict(
   key BLOB UNIQUE NOT NULL, 
   value BLOB NOT NULL
 );""")
+        if key_dumps is None:
+            key_dumps = dumps
+        if key_loads is None:
+            key_loads = loads
+        if value_dumps is None:
+            value_dumps = dumps
+        if value_loads is None:
+            value_loads = loads
         def execute(sql, params=None, /):
+            if sql.startswith("SELECT"):
+                lock_ = None
+            else:
+                lock_ = lock
             cur = con.cursor(AutoCloseCursor)
             if params:
-                if dumps:
-                    params = tuple(map(dumps, params))
-                cur.execute(sql, params)
+                if len(params) == 1:
+                    if key_dumps:
+                        key, = params
+                        params = key_dumps(key),
+                elif key_dumps or value_dumps:
+                    key, value = params
+                    if key_dumps:
+                        key = key_dumps(key)
+                    if value_dumps:
+                        value = value_dumps(value)
+                    params = key, value
+                call_with_lock(lock_, cur.execute, sql, params)
             else:
-                cur.execute(sql)
+                call_with_lock(lock_, cur.execute, sql)
             return cur
         self.execute = execute
-        if loads:
+        if key_loads or value_loads:
             def row_factory(_, r, /):
+                key = r[0]
                 if len(r) == 1:
-                    v, = r
-                    if type(v) is int:
-                        return v
-                    return loads(v)
-                return loads(r[0]), loads(r[1])
+                    if type(key) is int:
+                        return key
+                    if value_loads:
+                        key = value_loads(key)
+                    return key
+                if key_loads:
+                    key = key_loads(key)
+                if len(r) == 3:
+                    return key
+                value = r[2]
+                if value_loads:
+                    value = value_loads(value)
+                return key, value
         else:
             def row_factory(_, r, /):
-                if len(r) == 1:
+                if len(r) in (1, 3):
                     return r[0]
                 return r
         con.row_factory = row_factory
@@ -86,7 +128,7 @@ CREATE TABLE IF NOT EXISTS dict(
         raise KeyError(key)
 
     def __iter__(self, /) -> Iterator:
-        return self.execute("SELECT key FROM dict")
+        return self.execute("SELECT key, NULL, NULL FROM dict")
 
     def __len__(self, /) -> int:
         return next(self.execute("SELECT COUNT(1) FROM dict"), 0)

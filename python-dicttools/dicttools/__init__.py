@@ -4,18 +4,18 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 4)
+__version__ = (0, 0, 5)
 __all__ = [
     "get", "get_first", "get_first_item", "get_all", "get_all_items", 
     "pop", "pop_first", "pop_first_item", "pop_all", "pop_all_items", 
     "popitem", "setdefault", "setdefault_first", "setdefault_first_item", 
     "setdefault_all", "setdefault_all_items", "discard", "discard_first", 
-    "discard_all", "contains", "contains_first", "contains_all", 
-    "contains_value", "update", "merge", "chain_get", "keyof", "clear", 
-    "keys", "values", "items", "iter_keys", "iter_values", "iter_items", 
-    "dict_swap", "dict_map", "iter_items_map", "dict_group", "dict_merge", 
-    "dict_update", "dict_key_to_lower_merge", "dict_key_to_lower_update", 
-    "KeyedDict", "KeyLowerDict", 
+    "discard_all", "contains", "contains_first", "all_contains", 
+    "contains_value", "contains_filter", "contains_any", "update", "merge", 
+    "chain_get", "keyof", "clear", "keys", "values", "items", "iter_keys", 
+    "iter_values", "iter_items", "dict_swap", "dict_map", "iter_items_map", 
+    "dict_group", "dict_merge", "dict_update", "dict_key_to_lower_merge", 
+    "dict_key_to_lower_update", "KeyedDict", "KeyLowerDict", 
 ]
 
 from collections.abc import (
@@ -478,12 +478,20 @@ def contains_first[K, V](m: Mapping[K, V], /, *keys) -> None | K:
     return None
 
 
-def contains_all[K, V](m: Mapping[K, V], /, *keys) -> list[K]:
+def contains_filter[K, V](m: Mapping[K, V], /, *keys) -> list[K]:
     return [k for k in keys if contains(m, k)]
 
 
 def contains_value(m: Mapping, v, /) -> bool:
     return v in values(m)
+
+
+def contains_all[K, V](m: Mapping[K, V], /, *keys) -> bool:
+    return all(contains(m, k) for k in keys)
+
+
+def contains_any[K, V](m: Mapping[K, V], /, *keys) -> bool:
+    return any(contains(m, k) for k in keys)
 
 
 def update[M: MutableMapping](

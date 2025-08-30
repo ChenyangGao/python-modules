@@ -69,9 +69,9 @@ def request_sync(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> Response:
     ...
 @overload
 def request_sync(
@@ -89,7 +89,7 @@ def request_sync(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> Response:
+) -> bytes:
     ...
 @overload
 def request_sync(
@@ -214,9 +214,9 @@ async def request_async(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncSession = _DEFAULT_ASYNC_SESSION, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> Response:
     ...
 @overload
 async def request_async(
@@ -234,7 +234,7 @@ async def request_async(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> Response:
+) -> bytes:
     ...
 @overload
 async def request_async(

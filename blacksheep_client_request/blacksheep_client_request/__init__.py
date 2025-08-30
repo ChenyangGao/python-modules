@@ -92,9 +92,9 @@ async def request(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ClientSession = undefined, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> Response:
     ...
 @overload
 async def request(
@@ -112,7 +112,7 @@ async def request(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> Response:
+) -> bytes:
     ...
 @overload
 async def request(

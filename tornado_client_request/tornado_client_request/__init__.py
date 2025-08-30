@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 2)
 __all__ = ["request", "request_sync", "request_async"]
 
 from collections import UserString
@@ -62,9 +62,9 @@ def request_sync(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | HTTPClient = _DEFAULT_CLIENT, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> HTTPResponse:
     ...
 @overload
 def request_sync(
@@ -82,7 +82,7 @@ def request_sync(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> HTTPResponse:
+) -> bytes:
     ...
 @overload
 def request_sync(
@@ -249,9 +249,9 @@ async def request_async(
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncHTTPClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: None = None, 
+    parse: None | EllipsisType = None, 
     **request_kwargs, 
-) -> bytes:
+) -> HTTPResponse:
     ...
 @overload
 async def request_async(
@@ -269,7 +269,7 @@ async def request_async(
     *, 
     parse: Literal[False], 
     **request_kwargs, 
-) -> HTTPResponse:
+) -> bytes:
     ...
 @overload
 async def request_async(

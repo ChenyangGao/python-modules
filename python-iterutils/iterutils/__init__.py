@@ -624,26 +624,52 @@ def chain[T](
 @overload
 def chain_from_iterable[T](
     iterables: Iterable[Iterable[T]], 
-    threaded: Literal[False] = False, 
+    threaded: bool = False, 
     *, 
     async_: Literal[False] = False, 
 ) -> Iterator[T]:
     ...
 @overload
 def chain_from_iterable[T](
-    iterables: Iterable[Iterable[T] | AsyncIterable[T]] | AsyncIterable[Iterable[T] | AsyncIterable[T]], 
+    iterables: (
+        AsyncIterable[Iterable[T]] | 
+        AsyncIterable[AsyncIterable[T]] | 
+        AsyncIterable[Iterable[T] | AsyncIterable[T]]
+    ), 
+    threaded: bool = False, 
+    *, 
+    async_: bool = False, 
+) -> AsyncIterator[T]:
+    ...
+@overload
+def chain_from_iterable[T](
+    iterables: (
+        Iterable[Iterable[T]] | 
+        Iterable[AsyncIterable[T]] | 
+        Iterable[Iterable[T] | AsyncIterable[T]] | 
+        AsyncIterable[Iterable[T]] | 
+        AsyncIterable[AsyncIterable[T]] | 
+        AsyncIterable[Iterable[T] | AsyncIterable[T]]
+    ), 
     threaded: bool = False, 
     *, 
     async_: Literal[True], 
 ) -> AsyncIterator[T]:
     ...
 def chain_from_iterable[T](
-    iterables: Iterable[Iterable[T]] | Iterable[Iterable[T] | AsyncIterable[T]] | AsyncIterable[Iterable[T] | AsyncIterable[T]], 
+    iterables: (
+        Iterable[Iterable[T]] | 
+        Iterable[AsyncIterable[T]] | 
+        Iterable[Iterable[T] | AsyncIterable[T]] | 
+        AsyncIterable[Iterable[T]] | 
+        AsyncIterable[AsyncIterable[T]] | 
+        AsyncIterable[Iterable[T] | AsyncIterable[T]]
+    ), 
     threaded: bool = False, 
     *, 
     async_: Literal[False, True] = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
-    if async_ or threaded or not isinstance(iterables, Iterable):
+    if async_ or not isinstance(iterables, Iterable):
         if isinstance(iterables, Iterable):
             return async_chain.from_iterable(iterables, threaded=threaded)
         else:

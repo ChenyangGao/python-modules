@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-sqlitedict"
-version = "0.0.1.2"
+version = "0.0.3"
 description = "Python sqlite3 dict-like."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

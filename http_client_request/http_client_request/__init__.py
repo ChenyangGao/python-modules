@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
+__version__ = (0, 0, 10)
 __all__ = [
     "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
     "ConnectionPool", "request", "set_keepalive", 
@@ -17,7 +17,7 @@ from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.client import (
     HTTPConnection as BaseHTTPConnection, HTTPSConnection as BaseHTTPSConnection, 
-    HTTPResponse as BaseHTTPResponse, 
+    HTTPResponse as BaseHTTPResponse, ImproperConnectionState, 
 )
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
@@ -286,6 +286,10 @@ class HTTPConnectionMixin:
     def response(self: Any, /) -> None | HTTPResponse:
         return self._HTTPConnection__response
 
+    @property
+    def state(self: Any, /) -> str:
+        return self._HTTPConnection__state
+
     def getresponse(self: Any, /) -> HTTPResponse:
         return cast(HTTPResponse, super().getresponse()) # type: ignore
 
@@ -294,9 +298,9 @@ class HTTPConnectionMixin:
         for _ in range(5):
             try:
                 return super().putrequest(*args, **kwds) # type: ignore
-            except (ConnectionResetError, BrokenPipeError) as e:
+            except (ConnectionResetError, BrokenPipeError, ImproperConnectionState) as e:
                 excs.append(e)
-                self.connect()
+                self.close()
         raise ExceptionGroup("too many retries", excs)
 
     def set_tunnel(self: Any, /, host=None, port=None, headers=None):
@@ -307,14 +311,10 @@ class HTTPConnectionMixin:
                     self.close()
                 self._tunnel_host = self._tunnel_port = None
                 self._tunnel_headers.clear()
-                if has_sock:
-                    self.connect()
         elif (self._tunnel_host, self._tunnel_port) != self._get_hostport(host, port):
             if has_sock:
                 self.close()
             super().set_tunnel(host, port, headers) # type: ignore
-            if has_sock:
-                self.connect()
 
 
 class HTTPConnection(HTTPConnectionMixin, BaseHTTPConnection):
@@ -368,24 +368,33 @@ class ConnectionPool:
             con.timeout = timeout
             sock = con.sock
             resp = con.response
-            if not sock or getattr(sock, "_closed"):
-                con.connect()
+            if con.state == "Idle" or not sock:
+                pass
+            elif con.state == "Request-sent" or getattr(sock, "_closed"):
+                con.close()
             elif resp and 0 < resp.unbuffer_size <= 1024 * 1024:
                 try:
                     resp.read()
                 except (ConnectionResetError, BrokenPipeError):
-                    con.connect()
+                    con.close()
             else:
-                sock.setblocking(False)
                 try:
-                    if Socket.recv(sock, 1):
-                        con.connect()
-                except BlockingIOError:
-                    pass
-                except (ConnectionResetError, BrokenPipeError):
-                    con.connect()
-                finally:
-                    sock.setblocking(True)
+                    sock.setblocking(False)
+                except OSError:
+                    con.close()
+                else:
+                    try:
+                        if Socket.recv(sock, 1):
+                            con.close()
+                    except BlockingIOError:
+                        pass
+                    except (ConnectionResetError, BrokenPipeError):
+                        con.close()
+                    try:
+                        if not getattr(sock, "_closed"):
+                            sock.setblocking(True)
+                    except OSError:
+                        pass
             return con
         if url.scheme == "https":
             return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)

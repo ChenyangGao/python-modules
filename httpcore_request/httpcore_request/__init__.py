@@ -132,7 +132,7 @@ class ResponseWrapper:
             )
 
 
-@dataclass(frozen=True)
+@dataclass
 class HTTPStatusError(OSError):
     code: int
     method: str

@@ -2,12 +2,13 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 7)
-__all__ = ["DirEntry", "iterdir"]
+__version__ = (0, 0, 9)
+__all__ = ["DirEntry", "iterdir_generic", "iterdir"]
 
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from datetime import datetime
+from inspect import isasyncgenfunction, isawaitable
 from os import (
     fspath, lstat, scandir, stat, stat_result, 
     DirEntry as _DirEntry, PathLike, 
@@ -16,8 +17,9 @@ from os.path import (
     abspath, commonpath, basename, isfile, isdir, 
     islink, realpath, 
 )
-from typing import cast, overload, Any, Final, Never
+from typing import cast, overload, Any, Final, Literal, Never
 
+from asynctools import ensure_aiter
 from texttools import format_mode, format_size
 
 
@@ -120,25 +122,41 @@ class DirEntry[AnyStr: (bytes, str)](metaclass=DirEntryMeta):
         return stat_info
 
 
-def _iterdir_bfs[AnyStr: (bytes, str)](
-    top: DirEntry[AnyStr], 
+def _isdir(path, /) -> bool:
+    is_dir = getattr(path, "isdir", None)
+    if is_dir is None:
+        is_dir = getattr(path, "is_dir", None)
+    if callable(is_dir):
+        is_dir = is_dir()
+    return bool(is_dir)
+
+
+async def _isdir_async(path, /) -> bool:
+    is_dir = getattr(path, "isdir", None)
+    if is_dir is None:
+        is_dir = getattr(path, "is_dir", None)
+    if callable(is_dir):
+        is_dir = is_dir()
+    if isawaitable(is_dir):
+        is_dir = await is_dir
+    return bool(is_dir)
+
+
+def _iterdir_bfs[P](
+    top, 
     /, 
-    isdir: Callable[[DirEntry[AnyStr]], bool], 
+    iterdir: Callable[..., Iterable[P]], 
     min_depth: int = 1, 
     max_depth: int = 1, 
-    predicate: None | Callable[[DirEntry[AnyStr]], None | bool] = None, 
+    isdir: None | Callable[[P], bool] = None, 
+    predicate: None | Callable[[P], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
-) -> Iterator[DirEntry[AnyStr]]:
-    if min_depth <= 0:
-        pred = True if predicate is None else predicate(top)
-        if pred is None:
-            return
-        elif pred:
-            yield top
-        min_depth = 1
-    if not max_depth or min_depth > max_depth > 0 or not isdir(top):
+) -> Iterator[P]:
+    if not max_depth or min_depth > max_depth > 0:
         return
-    dq: deque[tuple[int, DirEntry[AnyStr]]] = deque()
+    if isdir is None:
+        isdir = _isdir
+    dq: deque[tuple[int, Any]] = deque()
     push, pop = dq.append, dq.popleft
     push((0, top))
     while dq:
@@ -146,13 +164,13 @@ def _iterdir_bfs[AnyStr: (bytes, str)](
         depth += 1
         can_step_in = max_depth < 0 or depth < max_depth
         try:
-            for entry in map(DirEntry, scandir(entry)):
+            for entry in iterdir(entry):
                 pred = True if predicate is None else predicate(entry)
-                if pred is None:
+                if pred is 0:
                     continue
-                elif pred and depth >= min_depth:
+                if pred and depth >= min_depth:
                     yield entry
-                if can_step_in and isdir(entry):
+                if can_step_in and pred is not 1 and isdir(entry):
                     push((depth, entry))
         except OSError as e:
             if callable(onerror):
@@ -161,47 +179,88 @@ def _iterdir_bfs[AnyStr: (bytes, str)](
                 raise
 
 
-def _iterdir_dfs[AnyStr: (bytes, str)](
-    top: DirEntry[AnyStr], 
+async def _iterdir_bfs_async[AnyStr: (bytes, str), P](
+    top, 
     /, 
-    isdir: Callable[[DirEntry[AnyStr]], bool], 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    predicate: None | Callable[[P], Any] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> AsyncIterator[P]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir_async
+    dq: deque[tuple[int, Any]] = deque()
+    push, pop = dq.append, dq.popleft
+    push((0, top))
+    while dq:
+        depth, entry = pop()
+        depth += 1
+        can_step_in = max_depth < 0 or depth < max_depth
+        try:
+            async for entry in ensure_aiter(iterdir(entry)):
+                pred = True if predicate is None else predicate(entry)
+                if isawaitable(pred):
+                    pred = await pred
+                if pred is 0:
+                    continue
+                if pred and depth >= min_depth:
+                    yield entry
+                if can_step_in and pred is not 1:
+                    is_dir = isdir(entry)
+                    if isawaitable(is_dir):
+                        is_dir = await is_dir
+                    if is_dir:
+                        push((depth, entry))
+        except OSError as e:
+            if callable(onerror):
+                ret = onerror(e)
+                if isawaitable(ret):
+                    await ret
+            elif onerror:
+                raise
+
+
+def _iterdir_dfs[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]], 
     topdown: bool = True, 
     min_depth: int = 1, 
     max_depth: int = 1, 
-    predicate: None | Callable[[DirEntry[AnyStr]], None | bool] = None, 
+    isdir: None | Callable[[P], bool] = None, 
+    predicate: None | Callable[[P], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
-) -> Iterator[DirEntry[AnyStr]]:
-    global_yield_me = True
+) -> Iterator[P]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir
     if min_depth > 1:
         global_yield_me = False
         min_depth -= 1
-    elif min_depth <= 0:
-        pred = True if predicate is None else predicate(top)
-        if pred:
-            yield top
-        if pred is None or not isdir(top):
-            return
-        min_depth = 1
-    if not max_depth or min_depth > max_depth > 0:
-        return
+    else:
+        global_yield_me = True
     try:
         max_depth -= max_depth > 0
-        for entry in map(DirEntry, scandir(top)):
-            yield_me = global_yield_me
-            if yield_me and predicate is not None:
-                pred = predicate(entry)
-                if pred is None:
-                    continue
-                yield_me = pred 
+        for entry in iterdir(top):
+            pred = True if predicate is None else predicate(entry)
+            if pred is 0:
+                continue
+            yield_me = global_yield_me and pred
             if yield_me and topdown:
                 yield entry
-            if isdir(entry):
+            if max_depth and pred is not 1 and isdir(entry):
                 yield from _iterdir_dfs(
                     entry, 
-                    isdir=isdir, 
+                    iterdir=iterdir, 
                     topdown=topdown, 
                     min_depth=min_depth, 
                     max_depth=max_depth, 
+                    isdir=isdir, 
                     predicate=predicate, 
                     onerror=onerror, 
                 )
@@ -214,6 +273,198 @@ def _iterdir_dfs[AnyStr: (bytes, str)](
             raise
 
 
+async def _iterdir_dfs_async[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    predicate: None | Callable[[P], Any] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> AsyncIterator[P]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir_async
+    if min_depth > 1:
+        global_yield_me = False
+        min_depth -= 1
+    else:
+        global_yield_me = True
+    try:
+        max_depth -= max_depth > 0
+        async for entry in ensure_aiter(iterdir(top)):
+            pred = True if predicate is None else predicate(entry)
+            if isawaitable(pred):
+                pred = await pred
+            if pred is 0:
+                continue
+            yield_me = global_yield_me and pred
+            if yield_me and topdown:
+                yield entry
+            if max_depth and pred is not 1:
+                is_dir = isdir(entry)
+                if isawaitable(is_dir):
+                    is_dir = await is_dir
+                if is_dir:
+                    async for subentry in _iterdir_dfs_async(
+                        entry, 
+                        iterdir=iterdir, 
+                        topdown=topdown, 
+                        min_depth=min_depth, 
+                        max_depth=max_depth, 
+                        isdir=isdir, 
+                        predicate=predicate, 
+                        onerror=onerror, 
+                    ):
+                        yield subentry
+            if yield_me and not topdown:
+                yield entry
+    except OSError as e:
+        if callable(onerror):
+            ret = onerror(e)
+            if isawaitable(ret):
+                await ret
+        elif onerror:
+            raise
+
+
+@overload
+def iterdir_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] = None, 
+    predicate: None | bool | Callable[[P], Any] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[False] = False, 
+) -> Iterator[P]:
+    ...
+@overload
+def iterdir_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    predicate: None | bool | Callable[[P], Any] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[True], 
+) -> AsyncIterator[P]:
+    ...
+def iterdir_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    predicate: None | bool | Callable[[P], Any] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[False, True] = False, 
+) -> Iterator[P] | AsyncIterator[P]:
+    """遍历目录树
+
+    :param top: 顶层目录路径，默认为当前工作目录
+    :param iterdir: 从目录中获取所有的直属的文件和目录
+    :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索
+    :param min_depth: 最小深度，`top` 本身为 0
+    :param max_depth: 最大深度，< 0 时不限
+    :param isdir: 判断是不是目录
+    :param predicate: 调用以筛选遍历得到的路径
+
+        - 如果为 None，则不做筛选
+        - 如果为 True，则只输出文件
+        - 如果为 False，则只输出目录
+        - 否则，就是 Callable。对于返回值
+            - 如果为 True，则输出它，且会继续搜索它的子树
+            - 如果为 False，则跳过它，但会继续搜索它的子树
+            - 如果为 1，则输出它，但跳过它的子树
+            - 如果为 0，则跳过它，且跳过它的子树
+
+    :param onerror: 处理 OSError 异常。如果是 True，抛出异常；如果是 False，忽略异常；如果是调用，以异常为参数调用之
+    :param async_: 是否异步
+
+    :return: 遍历得到的文件或目录的迭代器
+    """
+    if isasyncgenfunction(iterdir):
+        async_ = True
+    if isinstance(predicate, bool):
+        if async_:
+            if isdir is None:
+                isdir = _isdir_async
+            if predicate is True:
+                async def predicate(e, /):
+                    is_dir = cast(Callable, isdir)(e)
+                    if isawaitable(is_dir):
+                        is_dir = await is_dir
+                    return not is_dir
+            elif predicate is False:
+                predicate = isdir
+        else:
+            if isdir is None:
+                isdir = _isdir
+            if predicate is True:
+                predicate = lambda e: not isdir(e)
+            elif predicate is False:
+                predicate = isdir
+    if topdown is None:
+        if async_:
+            return _iterdir_bfs_async(
+                top, 
+                iterdir=iterdir, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, 
+                predicate=predicate, 
+                onerror=onerror, 
+            )
+        else:
+            return _iterdir_bfs(
+                top, 
+                iterdir=iterdir, # type: ignore
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, # type: ignore
+                predicate=predicate, 
+                onerror=onerror, 
+            )
+    else:
+        if async_:
+            return _iterdir_dfs_async(
+                top, 
+                iterdir=iterdir, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, 
+                predicate=predicate, 
+                onerror=onerror, 
+            )
+        else:
+            return _iterdir_dfs(
+                top, 
+                iterdir=iterdir, # type: ignore
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, # type: ignore
+                predicate=predicate, 
+                onerror=onerror, 
+            )
+
+
 @overload
 def iterdir(
     top: None = None, 
@@ -221,7 +472,7 @@ def iterdir(
     topdown: None | bool = True, 
     min_depth: int = 1, 
     max_depth: int = 1, 
-    predicate: None | Callable[[DirEntry[str]], None | bool] = None, 
+    predicate: None | bool | Callable[[DirEntry[str]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[str]]:
@@ -233,7 +484,7 @@ def iterdir[AnyStr: (bytes, str)](
     topdown: None | bool = True, 
     min_depth: int = 1, 
     max_depth: int = 1, 
-    predicate: None | Callable[[DirEntry[AnyStr]], None | bool] = None, 
+    predicate: None | bool | Callable[[DirEntry[AnyStr]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry[AnyStr]]:
@@ -244,7 +495,7 @@ def iterdir[AnyStr: (bytes, str)](
     topdown: None | bool = True, 
     min_depth: int = 1, 
     max_depth: int = 1, 
-    predicate: None | Callable[[DirEntry[AnyStr]], None | bool] = None, 
+    predicate: None | bool | Callable[[DirEntry[AnyStr]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
 ) -> Iterator[DirEntry]:
@@ -254,7 +505,17 @@ def iterdir[AnyStr: (bytes, str)](
     :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索
     :param min_depth: 最小深度，`top` 本身为 0
     :param max_depth: 最大深度，< 0 时不限
-    :param predicate: 调用以筛选遍历得到的路径，如果得到的结果为 None，则不输出被判断的节点，但依然搜索它的子树
+    :param predicate: 调用以筛选遍历得到的路径
+
+        - 如果为 None，则不做筛选
+        - 如果为 True，则只输出文件
+        - 如果为 False，则只输出目录
+        - 否则，就是 Callable。对于返回值
+            - 如果为 True，则输出它，且会继续搜索它的子树
+            - 如果为 False，则跳过它，但会继续搜索它的子树
+            - 如果为 1，则输出它，但跳过它的子树
+            - 如果为 0，则跳过它，且跳过它的子树
+
     :param onerror: 处理 OSError 异常。如果是 True，抛出异常；如果是 False，忽略异常；如果是调用，以异常为参数调用之
     :param follow_symlinks: 是否跟进符号连接（如果为 False，则会把符号链接视为文件，即使它指向目录）
 
@@ -270,23 +531,14 @@ def iterdir[AnyStr: (bytes, str)](
                              commonpath((t := (realtop, realpath(e)))) not in t
     else:
         isdir = lambda e, /: e.is_dir(follow_symlinks=follow_symlinks)
-    if topdown is None:
-        return _iterdir_bfs(
-            top, 
-            isdir=isdir, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            predicate=predicate, 
-            onerror=onerror, 
-        )
-    else:
-        return _iterdir_dfs(
-            top, 
-            isdir=isdir, 
-            topdown=topdown, 
-            min_depth=min_depth, 
-            max_depth=max_depth, 
-            predicate=predicate, 
-            onerror=onerror, 
-        )
+    return iterdir_generic(
+        top, 
+        iterdir=scandir, # type: ignore
+        topdown=topdown, 
+        min_depth=min_depth, 
+        max_depth=max_depth, 
+        isdir=isdir, 
+        predicate=predicate, 
+        onerror=onerror, 
+    )
 

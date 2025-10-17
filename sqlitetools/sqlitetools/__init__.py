@@ -2,29 +2,37 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 5)
 __all__ = [
-    "FetchType", "AutoCloseConnection", "AutoCloseCursor", "enclose", 
+    "FetchType", "AutoCloseConnection", "AutoCloseCursor", 
+    "to_uri", "bind_row_factory", "enclose", "connect", 
     "transact", "execute", "query", "find", "upsert_items", 
 ]
 
-from collections.abc import Buffer, Callable, Iterable, Sequence
-from contextlib import contextmanager, suppress
-from enum import Enum
-from os import PathLike
+from collections.abc import Buffer, Callable, Iterable, Mapping, Sequence
+from contextlib import closing, contextmanager, suppress
+from enum import IntEnum
+from os import fsdecode, PathLike
+from os.path import isabs
+from platform import system
 from re import compile as re_compile, IGNORECASE
-from sqlite3 import connect, Connection, Cursor, ProgrammingError
+from sqlite3 import connect as sqlite_connect, Connection, Cursor, ProgrammingError
 from typing import Any, Final, Literal, Self
+from urllib.parse import urlencode
 
 
 CRE_SELECT_SQL_match: Final = re_compile(r"\s*SELECT\b", IGNORECASE).match
 CRE_COLNAME_sub: Final = re_compile(r" \[[^]]+\]$").sub
+CRE_MULTI_SLASH_sub: Final = re_compile(r"/{2,}").sub
+TRANSTAB_PATH_TO_URI: Final = {c: f"%{c:02x}" for c in b"?#"}
+if system() == "Windows":
+    TRANSTAB_PATH_TO_URI[ord("\\")] = "/"
 
 
-class FetchType(Enum):
+class FetchType(IntEnum):
     auto = 0
-    one = 1
-    any = 2
+    any = 1
+    one = 2
     dict = 3
 
     @classmethod
@@ -45,6 +53,12 @@ class AutoCloseCursor(Cursor):
     def __del__(self, /):
         self.close()
 
+    def __enter__(self, /) -> Self:
+        return self
+
+    def __exit__(self, /, *exc_info):
+        self.close()
+
 
 class AutoCloseConnection(Connection):
     """会自动关闭 Connection
@@ -52,10 +66,91 @@ class AutoCloseConnection(Connection):
     def __del__(self, /):
         with suppress(ProgrammingError):
             self.commit()
-            self.close()
+        self.close()
 
     def cursor(self, /, factory = AutoCloseCursor):
         return super().cursor(factory)
+
+
+def to_uri(
+    path: bytes | str | PathLike, 
+    params: Any = None, 
+) -> str:
+    """把路径转换为 URI
+
+    .. note::
+        - https://sqlite.org/uri.html#the_uri_path
+        - https://tools.ietf.org/html/rfc3986
+
+    :param path: 路径
+    :param params: 查询参数
+
+    :return: 转换后的 URI
+    """
+    path = fsdecode(path).translate(TRANSTAB_PATH_TO_URI)
+    path = CRE_MULTI_SLASH_sub("/", path)
+    if isabs(path) and not path.startswith("/"):
+        path = "/" + path
+    if params:
+        if isinstance(params, Buffer):
+            params = str(params, "utf-8")
+        elif not isinstance(params, str):
+            params = urlencode(params)
+        if params and not params.startswith("?"):
+            params = "?" + params
+    return f"file:{path}{params}"
+
+
+def bind_row_factory[C: Cursor](
+    cursor: C, 
+    /, 
+    row_factory: None | int | str | FetchType | Callable[[Cursor, Any], Any] = None, 
+) -> C:
+    """给游标绑定数据处理
+
+    :param cursor: 游标
+    :param row_factory: 对数据进行处理，然后返回处理后的值
+
+        - 如果是 Callable，则调用然后返回它的值
+        - 如果是 FetchType.auto，则当数据是 tuple 且长度为 1 时，返回第 1 个为位置的值，否则返回数据本身
+        - 如果是 FetchType.any，则返回数据本身
+        - 如果是 FetchType.one，则返回数据中第 1 个位置的值（索引为 0）
+        - 如果是 FetchType.dict，则返回字典，键从游标中获取
+
+    :return: 返回传入的游标
+    """
+    if row_factory is not None:
+        if not callable(row_factory):
+            match FetchType.ensure(row_factory):
+                case FetchType.auto:
+                    def row_factory(_, record):
+                        if isinstance(record, (Buffer, str)):
+                            return record
+                        if isinstance(record, Sequence) and len(record) == 1:
+                            return record[0]
+                        return record
+                case FetchType.one:
+                    def row_factory(_, record, /):
+                        if isinstance(record, (Buffer, str)):
+                            return record
+                        elif isinstance(record, Sequence):
+                            return record[0]
+                        elif isinstance(record, Mapping):
+                            return record[next(iter(record))]
+                        elif isinstance(record, Iterable):
+                            return next(iter(record))
+                        return record
+                case FetchType.dict:
+                    fields = tuple(CRE_COLNAME_sub("", f[0]) for f in cursor.description)
+                    def row_factory(_, record, /):
+                        if not isinstance(record, Mapping):
+                            record = dict(zip(fields, record))
+                        return record
+                case _:
+                    row_factory = None
+        if row_factory is not None:
+            cursor.row_factory = row_factory
+    return cursor
 
 
 def enclose(
@@ -80,6 +175,20 @@ def enclose(
         return f"{encloser}{name.replace(encloser, encloser * 2)}{encloser}"
 
 
+def connect(
+    database=":memory:", 
+    factory: type[Connection] = AutoCloseConnection, 
+    **kwargs, 
+ ) -> Connection:
+    if isinstance(database, Connection):
+        return database
+    elif isinstance(database, Cursor):
+        return database.connection
+    if isinstance(database, str) and database.startswith("file:"):
+        kwargs.setdefault("uri", True)
+    return sqlite_connect(database, factory=factory, **kwargs)
+
+
 @contextmanager
 def transact(
     con: bytes | str | PathLike | Connection | Cursor, 
@@ -93,12 +202,9 @@ def transact(
 
     :return: 上下文管理器，返回一个游标
     """
-    if isinstance(con, (bytes, PathLike)):
-        with connect(con) as con:
-            yield from transact.__wrapped__(con) # type: ignore
-    elif isinstance(con, str):
-        with connect(con, uri=con.startswith("file:")) as con:
-            yield from transact.__wrapped__(con) # type: ignore
+    if isinstance(con, (bytes, str, PathLike)):
+        with connect(con, isolation_level=isolation_level) as con:
+            yield from transact.__wrapped__(con, isolation_level) # type: ignore
     else:
         if isinstance(con, Connection):
             cur: Cursor = con.cursor(factory=AutoCloseCursor)
@@ -187,23 +293,7 @@ def query(
     :return: 游标
     """
     cursor = execute(con, sql, params)
-    if row_factory is not None:
-        if callable(row_factory):
-            cursor.row_factory = row_factory
-        else:
-            match FetchType.ensure(row_factory):
-                case FetchType.auto:
-                    def row_factory(_, record):
-                        if isinstance(record, tuple) and len(record) == 1:
-                            return record[0]
-                        return record
-                    cursor.row_factory = row_factory
-                case FetchType.one:
-                    cursor.row_factory = lambda _, record: record[0]
-                case FetchType.dict:
-                    fields = tuple(CRE_COLNAME_sub("", f[0]) for f in cursor.description)
-                    cursor.row_factory = lambda _, record: dict(zip(fields, record))
-    return cursor
+    return bind_row_factory(cursor, row_factory)
 
 
 def find(
@@ -230,27 +320,14 @@ def find(
 
     :return: 查询结果的第一条数据
     """
-    cursor = query(con, sql, params)
-    record = cursor.fetchone()
-    cursor.close()
-    if record is None:
-        if isinstance(default, BaseException):
-            raise default
-        return default
-    if callable(row_factory):
-        return row_factory(cursor, record)
-    else:
-        match FetchType.ensure(row_factory):
-            case FetchType.auto:
-                if isinstance(record, tuple) and len(record) == 1:
-                    return record[0]
-                return record
-            case FetchType.one:
-                return record[0]
-            case FetchType.dict:
-                return dict(zip((CRE_COLNAME_sub("", f[0]) for f in cursor.description), record))
-            case _:
-                return record
+    with closing(query(con, sql, params)) as cursor:
+        bind_row_factory(cursor, row_factory)
+        record = cursor.fetchone()
+        if record is None:
+            if isinstance(default, BaseException):
+                raise default
+            return default
+        return record
 
 
 def upsert_items(
@@ -259,14 +336,24 @@ def upsert_items(
     /, 
     extras: None | dict = None, 
     fields: Sequence[str] = (), 
+    on_conflict: Literal["", "ABORT", "FAIL", "IGNORE", "REPLACE", "ROLLBACK"] = "", 
+    where: str = "", 
     table: str = "data", 
     commit: bool = False, 
 ) -> Cursor:
     """往表中插入或更新数据
 
+    .. note::
+        - https://sqlite.org/lang_insert.html
+        - https://sqlite.org/lang_upsert.html
+        - https://sqlite.org/lang_conflict.html
+
     :param con: 数据库连接或游标
     :param items: 一组数据
     :param extras: 附加数据
+    :param fields: 需要插入的字段
+    :param on_conflict: 冲突策略，如果为空，则会执行 UPSERT
+    :param where: 判断条件，即在符合的情况下才执行 UPSERT，否则相当于 IGNORE
     :param table: 表名
     :param commit: 是否提交
 
@@ -283,9 +370,17 @@ def upsert_items(
         items = [extras | item for item in items]
     if not fields:
         fields = tuple(items[0])
+    if on_conflict:
+        insert_conflict = " OR " + on_conflict
+    else:
+        insert_conflict = ""
     sql = f"""\
-INSERT INTO {table}({",".join(fields)})
-VALUES ({",".join(map(":".__add__, fields))})
+INSERT{insert_conflict} INTO {table}({",".join(fields)})
+VALUES ({",".join(map(":".__add__, fields))})"""
+    if not on_conflict:
+        sql += f"""
 ON CONFLICT DO UPDATE SET {",".join(map("{0}=excluded.{0}".format, fields))}"""
+        if where:
+            sql += "\nWHERE " + where
     return execute(con, sql, items, executemany=True, commit=commit)
 

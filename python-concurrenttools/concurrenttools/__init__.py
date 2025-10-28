@@ -6,8 +6,8 @@ __version__ = (0, 1, 3)
 __all__ = [
     "thread_batch", "thread_pool_batch", "async_batch", 
     "threaded", "run_as_thread", "asynchronized", "run_as_async", 
-    "threadpool_map", "taskgroup_map", "conmap", "iter_pages", 
-    "Return", 
+    "threadpool_map", "taskgroup_map", "conmap", "conmap_wrap", 
+    "iter_pages", "Return", 
 ]
 
 from asyncio import (
@@ -447,6 +447,67 @@ def conmap[T](
         arg_func=arg_func, 
         max_workers=max_workers, 
         kwargs=kwargs, 
+    )
+
+
+@overload
+def conmap_wrap[T](
+    func: Callable[..., T], 
+    it, 
+    /, 
+    *its, 
+    arg_func: None | Callable = None, 
+    max_workers: None | int = None, 
+    kwargs: Mapping = {}, 
+    async_: Literal[False] = False, 
+) -> Iterator[tuple[tuple, None | T, None | BaseExceptionGroup]]:
+    ...
+@overload
+def conmap_wrap[T](
+    func: Callable[..., Awaitable[T]], 
+    it, 
+    /, 
+    *its, 
+    arg_func: None | Callable = None, 
+    max_workers: None | int = None, 
+    kwargs: Mapping = {}, 
+    async_: Literal[True], 
+) -> AsyncIterator[tuple[tuple, None | T, None | BaseExceptionGroup]]:
+    ...
+def conmap_wrap[T](
+    func: Callable[..., T] | Callable[..., Awaitable[T]], 
+    it, 
+    /, 
+    *its, 
+    arg_func: None | Callable = None, 
+    max_workers: None | int = None, 
+    kwargs: Mapping = {}, 
+    async_: Literal[False, True] = False, 
+) -> Iterator[tuple[tuple, None | T, None | BaseExceptionGroup]] | AsyncIterator[tuple[tuple, None | T, None | BaseExceptionGroup]]:
+    method: Callable
+    if async_:
+        async def method(*args):
+            try:
+                ret = func(*args)
+                if isawaitable(ret):
+                    ret = await ret
+                return args, ret, None
+            except BaseException as e:
+                return args, None, e
+    else:
+        def method(*args):
+            try:
+                return args, func(*args), None
+            except BaseException as e:
+                return args, None, e
+    return conmap(
+        method, 
+        it, 
+        *its, 
+        arg_func=arg_func, 
+        max_workers=max_workers, 
+        kwargs=kwargs, 
+        async_=async_, 
     )
 
 

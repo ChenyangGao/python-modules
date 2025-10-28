@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "iterdir"
-version = "0.0.9"
+version = "0.0.10"
 description = "python iterate over path tree."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

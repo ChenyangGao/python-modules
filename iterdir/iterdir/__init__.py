@@ -2,8 +2,8 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 9)
-__all__ = ["DirEntry", "iterdir_generic", "iterdir"]
+__version__ = (0, 0, 10)
+__all__ = ["DirEntry", "iterdir_generic", "walk_generic", "iterdir", "walk"]
 
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -179,7 +179,7 @@ def _iterdir_bfs[P](
                 raise
 
 
-async def _iterdir_bfs_async[AnyStr: (bytes, str), P](
+async def _iterdir_bfs_async[P](
     top, 
     /, 
     iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
@@ -376,7 +376,7 @@ def iterdir_generic[P](
 ) -> Iterator[P] | AsyncIterator[P]:
     """遍历目录树
 
-    :param top: 顶层目录路径，默认为当前工作目录
+    :param top: 顶层目录
     :param iterdir: 从目录中获取所有的直属的文件和目录
     :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索
     :param min_depth: 最小深度，`top` 本身为 0
@@ -465,13 +465,302 @@ def iterdir_generic[P](
             )
 
 
+def _walk_bfs[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]], 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> Iterator[tuple[Any, list[P], list[P]]]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir
+    dq: deque[tuple[int, Any]] = deque()
+    push, pop = dq.append, dq.popleft
+    push((0, top))
+    while dq:
+        depth, entry = pop()
+        depth += 1
+        can_step_in = max_depth < 0 or depth < max_depth
+        try:
+            files: list[P] = []
+            dirs: list[P] = []
+            for entry in iterdir(entry):
+                if isdir(entry):
+                    if can_step_in:
+                        push((depth, entry))
+                    dirs.append(entry)
+                else:
+                    files.append(entry)
+        except OSError as e:
+            if callable(onerror):
+                onerror(e)
+            elif onerror:
+                raise
+        else:
+            if depth >= min_depth:
+                yield top, dirs, files
+
+
+async def _walk_bfs_async[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> AsyncIterator[tuple[Any, list[P], list[P]]]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir_async
+    dq: deque[tuple[int, Any]] = deque()
+    push, pop = dq.append, dq.popleft
+    push((0, top))
+    while dq:
+        depth, entry = pop()
+        depth += 1
+        can_step_in = max_depth < 0 or depth < max_depth
+        try:
+            files: list[P] = []
+            dirs: list[P] = []
+            async for entry in ensure_aiter(iterdir(entry)):
+                is_dir = isdir(entry)
+                if isawaitable(is_dir):
+                    is_dir = await is_dir
+                if is_dir:
+                    if can_step_in:
+                        push((depth, entry))
+                    dirs.append(entry)
+                else:
+                    files.append(entry)
+            if depth >= min_depth:
+                yield top, dirs, files
+        except OSError as e:
+            if callable(onerror):
+                ret = onerror(e)
+                if isawaitable(ret):
+                    await ret
+            elif onerror:
+                raise
+
+
+def _walk_dfs[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]], 
+    topdown: bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> Iterator[tuple[Any, list[P], list[P]]]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir
+    if min_depth > 1:
+        yield_me = False
+        min_depth -= 1
+    else:
+        yield_me = True
+    try:
+        files: list[P] = []
+        dirs: list[P] = []
+        for entry in iterdir(top):
+            if isdir(entry):
+                dirs.append(entry)
+            else:
+                files.append(entry)
+    except OSError as e:
+        if callable(onerror):
+            onerror(e)
+        elif onerror:
+            raise
+    else:
+        if yield_me and topdown:
+            yield top, dirs, files
+        max_depth -= max_depth > 0
+        if max_depth:
+            for entry in dirs:
+                yield from _walk_dfs(
+                    entry, 
+                    iterdir=iterdir, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    isdir=isdir, 
+                    onerror=onerror, 
+                )
+        if yield_me and not topdown:
+            yield top, dirs, files
+
+
+async def _walk_dfs_async[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+) -> AsyncIterator[tuple[Any, list[P], list[P]]]:
+    if not max_depth or min_depth > max_depth > 0:
+        return
+    if isdir is None:
+        isdir = _isdir_async
+    if min_depth > 1:
+        yield_me = False
+        min_depth -= 1
+    else:
+        yield_me = True
+    try:
+        files: list[P] = []
+        dirs: list[P] = []
+        async for entry in ensure_aiter(iterdir(top)):
+            is_dir = isdir(entry)
+            if isawaitable(is_dir):
+                is_dir = await is_dir
+            if is_dir:
+                dirs.append(entry)
+            else:
+                files.append(entry)
+    except OSError as e:
+        if callable(onerror):
+            ret = onerror(e)
+            if isawaitable(ret):
+                await ret
+        elif onerror:
+            raise
+    else:
+        if yield_me and topdown:
+            yield top, dirs, files
+        max_depth -= max_depth > 0
+        if max_depth:
+            for entry in dirs:
+                async for subentry in _walk_dfs_async(
+                    entry, 
+                    iterdir=iterdir, 
+                    topdown=topdown, 
+                    min_depth=min_depth, 
+                    max_depth=max_depth, 
+                    isdir=isdir, 
+                    onerror=onerror, 
+                ):
+                    yield subentry
+        if yield_me and not topdown:
+            yield top, dirs, files
+
+
+@overload
+def walk_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[False] = False, 
+) -> Iterator[tuple[Any, list[P], list[P]]]:
+    ...
+@overload
+def walk_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[True], 
+) -> AsyncIterator[tuple[Any, list[P], list[P]]]:
+    ...
+def walk_generic[P](
+    top, 
+    /, 
+    iterdir: Callable[..., Iterable[P]] | Callable[..., AsyncIterable[P]], 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = 1, 
+    isdir: None | Callable[[P], bool] | Callable[[P], Awaitable[bool]] = None, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    *, 
+    async_: Literal[False, True] = False, 
+) -> Iterator[tuple[Any, list[P], list[P]]] | AsyncIterator[tuple[Any, list[P], list[P]]]:
+    """遍历目录树
+
+    :param top: 顶层目录
+    :param iterdir: 从目录中获取所有的直属的文件和目录
+    :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索
+    :param min_depth: 最小深度，`top` 本身为 0
+    :param max_depth: 最大深度，< 0 时不限
+    :param isdir: 判断是不是目录
+    :param onerror: 处理 OSError 异常。如果是 True，抛出异常；如果是 False，忽略异常；如果是调用，以异常为参数调用之
+    :param async_: 是否异步
+
+    :return: 遍历得到 (父目录, 文件列表, 目录列表) 的 3 元组迭代器
+    """
+    if isasyncgenfunction(iterdir):
+        async_ = True
+    if topdown is None:
+        if async_:
+            return _walk_bfs_async(
+                top, 
+                iterdir=iterdir, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, 
+                onerror=onerror, 
+            )
+        else:
+            return _walk_bfs(
+                top, 
+                iterdir=iterdir, # type: ignore
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, # type: ignore
+                onerror=onerror, 
+            )
+    else:
+        if async_:
+            return _walk_dfs_async(
+                top, 
+                iterdir=iterdir, 
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, 
+                onerror=onerror, 
+            )
+        else:
+            return _walk_dfs(
+                top, 
+                iterdir=iterdir, # type: ignore
+                topdown=topdown, 
+                min_depth=min_depth, 
+                max_depth=max_depth, 
+                isdir=isdir, # type: ignore
+                onerror=onerror, 
+            )
+
+
 @overload
 def iterdir(
     top: None = None, 
     /, 
     topdown: None | bool = True, 
     min_depth: int = 1, 
-    max_depth: int = 1, 
+    max_depth: int = -1, 
     predicate: None | bool | Callable[[DirEntry[str]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
@@ -483,7 +772,7 @@ def iterdir[AnyStr: (bytes, str)](
     /, 
     topdown: None | bool = True, 
     min_depth: int = 1, 
-    max_depth: int = 1, 
+    max_depth: int = -1, 
     predicate: None | bool | Callable[[DirEntry[AnyStr]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
@@ -494,7 +783,7 @@ def iterdir[AnyStr: (bytes, str)](
     /, 
     topdown: None | bool = True, 
     min_depth: int = 1, 
-    max_depth: int = 1, 
+    max_depth: int = -1, 
     predicate: None | bool | Callable[[DirEntry[AnyStr]], Any] = None, 
     onerror: bool | Callable[[OSError], Any] = False, 
     follow_symlinks: bool = False, 
@@ -539,6 +828,69 @@ def iterdir[AnyStr: (bytes, str)](
         max_depth=max_depth, 
         isdir=isdir, 
         predicate=predicate, 
+        onerror=onerror, 
+    )
+
+
+@overload
+def walk(
+    top: None = None, 
+    /, 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = -1, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    follow_symlinks: bool = False, 
+) -> Iterator[tuple[DirEntry[str], list[DirEntry[str]], list[DirEntry[str]]]]:
+    ...
+@overload
+def walk[AnyStr: (bytes, str)](
+    top: AnyStr | PathLike[AnyStr], 
+    /, 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = -1, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    follow_symlinks: bool = False, 
+) -> Iterator[tuple[DirEntry[AnyStr], list[DirEntry[AnyStr]], list[DirEntry[AnyStr]]]]:
+    ...
+def walk[AnyStr: (bytes, str)](
+    top: None | AnyStr | PathLike[AnyStr] = None, 
+    /, 
+    topdown: None | bool = True, 
+    min_depth: int = 1, 
+    max_depth: int = -1, 
+    onerror: bool | Callable[[OSError], Any] = False, 
+    follow_symlinks: bool = False, 
+) -> Iterator[tuple[DirEntry, list[DirEntry], list[DirEntry]]]:
+    """遍历目录树
+
+    :param top: 顶层目录路径，默认为当前工作目录
+    :param topdown: 如果是 True，自顶向下深度优先搜索；如果是 False，自底向上深度优先搜索；如果是 None，广度优先搜索
+    :param min_depth: 最小深度，`top` 本身为 0
+    :param max_depth: 最大深度，< 0 时不限
+    :param onerror: 处理 OSError 异常。如果是 True，抛出异常；如果是 False，忽略异常；如果是调用，以异常为参数调用之
+    :param follow_symlinks: 是否跟进符号连接（如果为 False，则会把符号链接视为文件，即使它指向目录）
+
+    :return: 遍历得到 (父目录, 文件列表, 目录列表) 的 3 元组迭代器
+    """
+    if top is None:
+        top = cast(DirEntry[AnyStr], DirEntry("."))
+    else:
+        top = DirEntry(top)
+    if follow_symlinks:
+        realtop = realpath(top)
+        isdir = lambda e, /: e.is_dir(follow_symlinks=follow_symlinks) and \
+                             commonpath((t := (realtop, realpath(e)))) not in t
+    else:
+        isdir = lambda e, /: e.is_dir(follow_symlinks=follow_symlinks)
+    return walk_generic(
+        top, 
+        iterdir=scandir, # type: ignore
+        topdown=topdown, 
+        min_depth=min_depth, 
+        max_depth=max_depth, 
+        isdir=isdir, 
         onerror=onerror, 
     )
 

@@ -119,6 +119,9 @@ class ResponseWrapper:
     def raise_for_status(self, /):
         status_code = self.response.status
         if status_code >= 400:
+            content = getattr(self.response, "_content", None)
+            if content:
+                content = decompress_response(content, self)
             request = self.request
             raise HTTPStatusError(
                 code=status_code, 
@@ -129,6 +132,7 @@ class ResponseWrapper:
                 headers=list(self.headers.items()), 
                 request=self.request, 
                 response=self, 
+                response_body=content, 
             )
 
 
@@ -142,6 +146,7 @@ class HTTPStatusError(OSError):
     headers: dict[str, str] | list[tuple[str, str]]
     request: Request
     response: ResponseWrapper | Response
+    response_body: None | bytes | bytearray = None
 
     @property
     def args(self, /) -> tuple: # type: ignore
@@ -344,7 +349,8 @@ def request_sync[T](
                     response.read()
                 response.close()
                 continue
-        elif raise_for_status:
+        elif raise_for_status and status_code >= 400:
+            response.read()
             response.raise_for_status()
         if parse is None:
             return response
@@ -557,7 +563,8 @@ async def request_async[T](
                     await response.aread()
                 await response.aclose()
                 continue
-        elif raise_for_status:
+        elif raise_for_status and status_code >= 400:
+            await response.aread()
             response.raise_for_status()
         if parse is None:
             return response

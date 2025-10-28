@@ -81,7 +81,6 @@ def get_filesize(
     return total
 
 
-# TODO: 默认使用 http.client 而不是 urlopen
 class HTTPFileReader(RawIOBase, BinaryIO):
     url: str | Callable[[], str]
     response: Any
@@ -102,7 +101,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         # NOTE: If the offset of the forward seek is not higher than this value, 
         #       it will be directly read and discarded, default to 1 MB
         seek_threshold: int = 1 << 20, 
-        urlopen = urlopen, 
+        urlopen = None, 
     ):
         if headers:
             headers = {**headers, "accept-encoding": "identity"}
@@ -509,7 +508,7 @@ class HTTPFileReader(RawIOBase, BinaryIO):
         else:
             buffer_size = buffering
         raw = self
-        buffer = BufferedReader(raw, buffer_size)
+        buffer: BufferedReader = BufferedReader(raw, buffer_size)
         if text_mode:
             return TextIOWrapper(
                 buffer, 
@@ -1049,8 +1048,6 @@ if find_spec("requests"):
 
 
 if find_spec("aiohttp"):
-    from types import MethodType
-
     _aiohttp_urlopen = None
 
     class AiohttpFileReader(AsyncHTTPFileReader):
@@ -1229,6 +1226,6 @@ if find_spec("httpx"):
     __all__.append("HttpxFileReader")
     __all__.append("AsyncHttpxFileReader")
 
-# TODO: 增加 blacksheep 的 HTTPFileReader
+# TODO: 实现任意请求模块的 HTTPFileReader，只要它支持流式读取即可（分成 2 种类型：要么支持 read，要么支持迭代器）
 # TODO: 设计实现一个 HTTPFileWriter，用于实现上传，关闭后视为上传完成
 # TODO: httpx 重新实现 stream 和 async_stream 方法，确保不需要用上下文管理器，如此才能真的简化

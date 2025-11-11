@@ -5,7 +5,7 @@ from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
 __all__ = ["errno"]
-__version__ = (0, 0, 1)
+__version__ = (0, 0, 3)
 
 from enum import IntEnum
 
@@ -15,162 +15,204 @@ class errno(IntEnum):
 
     .. admonition:: Reference
 
-        https://docs.python.org/3/library/errno.html
+        - https://docs.python.org/3/library/errno.html
+        - https://man7.org/linux/man-pages/man3/errno.3.html
+        - https://en.wikipedia.org/wiki/Errno.h
+        - https://sourceware.org/glibc/manual/latest/html_mono/libc.html
+        - https://github.com/torvalds/linux
+
+            - include/uapi/asm-generic/errno-base.h
+            - include/uapi/asm-generic/errno.h
+            - arch/alpha/include/uapi/asm/errno.h
+            - arch/mips/include/uapi/asm/errno.h
+            - arch/parisc/include/uapi/asm/errno.h
+            - arch/sparc/include/uapi/asm/errno.h
+            - tools/include/uapi/asm-generic/errno-base.h
+            - tools/include/uapi/asm-generic/errno.h
+            - tools/arch/alpha/include/uapi/asm/errno.h
+            - tools/arch/mips/include/uapi/asm/errno.h
+            - tools/arch/parisc/include/uapi/asm/errno.h
+            - tools/arch/sparc/include/uapi/asm/errno.h
     """
-    EPERM = 1
-    ENOENT = 2
-    ESRCH = 3
-    EINTR = 4
-    EIO = 5
-    ENXIO = 6
-    E2BIG = 7
-    ENOEXEC = 8
-    EBADF = 9
-    ECHILD = 10
-    EAGAIN = 11
-    ENOMEM = 12
-    EACCES = 13
-    EFAULT = 14
-    ENOTBLK = 15
-    EBUSY = 16
-    EEXIST = 17
-    EXDEV = 18
-    ENODEV = 19
-    ENOTDIR = 20
-    EISDIR = 21
-    EINVAL = 22
-    ENFILE = 23
-    EMFILE = 24
-    ENOTTY = 25
-    ETXTBSY = 26
-    EFBIG = 27
-    ENOSPC = 28
-    ESPIPE = 29
-    EROFS = 30
-    EMLINK = 31
-    EPIPE = 32
-    EDOM = 33
-    ERANGE = 34
-    EDEADLK = 35
-    ENAMETOOLONG = 36
-    ENOLCK = 37
-    ENOSYS = 38
-    ENOTEMPTY = 39
-    ELOOP = 40
-    EWOULDBLOCK = 41
-    ENOMSG = 42
-    EIDRM = 43
-    ECHRNG = 44
-    EL2NSYNC = 45
-    EL3HLT = 46
-    EL3RST = 47
-    ELNRNG = 48
-    EUNATCH = 49
-    ENOCSI = 50
-    EL2HLT = 51
-    EBADE = 52
-    EBADR = 53
-    EXFULL = 54
-    ENOANO = 55
-    EBADRQC = 56
-    EBADSLT = 57
-    EDEADLOCK = 58
-    EBFONT = 59
-    ENOSTR = 60
-    ENODATA = 61
-    ETIME = 62
-    ENOSR = 63
-    ENONET = 64
-    ENOPKG = 65
-    EREMOTE = 66
-    ENOLINK = 67
-    EADV = 68
-    ESRMNT = 69
-    ECOMM = 70
-    EPROTO = 71
-    EMULTIHOP = 72
-    EDOTDOT = 73
-    EBADMSG = 74
-    EOVERFLOW = 75
-    ENOTUNIQ = 76
-    EBADFD = 77
-    EREMCHG = 78
-    ELIBACC = 79
-    ELIBBAD = 80
-    ELIBSCN = 81
-    ELIBMAX = 82
-    ELIBEXEC = 83
-    EILSEQ = 84
-    ERESTART = 85
-    ESTRPIPE = 86
-    EUSERS = 87
-    ENOTSOCK = 88
-    EDESTADDRREQ = 89
-    EMSGSIZE = 90
-    EPROTOTYPE = 91
-    ENOPROTOOPT = 92
-    EPROTONOSUPPORT = 93
-    ESOCKTNOSUPPORT = 94
-    EOPNOTSUPP = 95
-    ENOTSUP = 96
-    EPFNOSUPPORT = 97
-    EAFNOSUPPORT = 98
-    EADDRINUSE = 99
-    EADDRNOTAVAIL = 100
-    ENETDOWN = 101
-    ENETUNREACH = 102
-    ENETRESET = 103
-    ECONNABORTED = 104
-    ECONNRESET = 105
-    ENOBUFS = 106
-    EISCONN = 107
-    ENOTCONN = 108
-    ESHUTDOWN = 109
-    ETOOMANYREFS = 110
-    ETIMEDOUT = 111
-    ECONNREFUSED = 112
-    EHOSTDOWN = 113
-    EHOSTUNREACH = 114
-    EALREADY = 115
-    EINPROGRESS = 116
-    ESTALE = 117
-    EUCLEAN = 118
-    ENOTNAM = 119
-    ENAVAIL = 120
-    EISNAM = 121
-    EREMOTEIO = 122
-    EDQUOT = 123
-    EQFULL = 124
-    ENOMEDIUM = 125
-    EMEDIUMTYPE = 126
-    ENOKEY = 127
-    EKEYEXPIRED = 128
-    EKEYREVOKED = 129
-    EKEYREJECTED = 130
-    ERFKILL = 131
-    ELOCKUNMAPPED = 132
-    ENOTACTIVE = 133
-    EAUTH = 134
-    EBADARCH = 135
-    EBADEXEC = 136
-    EBADMACHO = 137
-    EDEVERR = 138
-    EFTYPE = 139
-    ENEEDAUTH = 140
-    ENOATTR = 141
-    ENOPOLICY = 142
-    EPROCLIM = 143
-    EPROCUNAVAIL = 144
-    EPROGMISMATCH = 145
-    EPROGUNAVAIL = 146
-    EPWROFF = 147
-    EBADRPC = 148
-    ERPCMISMATCH = 149
-    ESHLIBVERS = 150
-    ENOTCAPABLE = 151
-    ECANCELED = 152
-    EOWNERDEAD = 153
-    ENOTRECOVERABLE = 154
+    description: str
+
+    def __new__(cls, value: int, description: str = ""):
+        obj = int.__new__(cls, value)
+        obj._value_ = value
+        obj.description = description
+        return obj
+
+    EPERM = 1, "Operation not permitted"
+    ENOENT = 2, "No such file or directory"
+    ESRCH = 3, "No such process"
+    EINTR = 4, "Interrupted system call"
+    EIO = 5, "Input/output error"
+    ENXIO = 6, "No such device or address"
+    E2BIG = 7, "Argument list too long"
+    ENOEXEC = 8, "Exec format error"
+    EBADF = 9, "Bad file descriptor"
+    ECHILD = 10, "No child processes"
+    EAGAIN = 11, "Resource temporarily unavailable"
+    ENOMEM = 12, "Cannot allocate memory"
+    EACCES = 13, "Permission denied"
+    EFAULT = 14, "Bad address"
+    ENOTBLK = 15, "Block device required"
+    EBUSY = 16, "Device or resource busy"
+    EEXIST = 17, "File exists"
+    EXDEV = 18, "Invalid cross-device link"
+    ENODEV = 19, "No such device"
+    ENOTDIR = 20, "Not a directory"
+    EISDIR = 21, "Is a directory"
+    EINVAL = 22, "Invalid argument"
+    ENFILE = 23, "Too many open files in system"
+    EMFILE = 24, "Too many open files"
+    ENOTTY = 25, "Inappropriate ioctl for device"
+    ETXTBSY = 26, "Text file busy"
+    EFBIG = 27, "File too large"
+    ENOSPC = 28, "No space left on device"
+    ESPIPE = 29, "Illegal seek"
+    EROFS = 30, "Read-only file system"
+    EMLINK = 31, "Too many links"
+    EPIPE = 32, "Broken pipe"
+    EDOM = 33, "Numerical argument out of domain"
+    ERANGE = 34, "Numerical result out of range"
+    EDEADLK = 35, "Resource deadlock avoided"
+    ENAMETOOLONG = 36, "File name too long"
+    ENOLCK = 37, "No locks available"
+    ENOSYS = 38, "Function not implemented"
+    ENOTEMPTY = 39, "Directory not empty"
+    ELOOP = 40, "Too many levels of symbolic links"
+    EWOULDBLOCK = 41, "Operation would block"
+    ENOMSG = 42, "No message of desired type"
+    EIDRM = 43, "Identifier removed"
+    ECHRNG = 44, "Channel number out of range"
+    EL2NSYNC = 45, "Level 2 not synchronized"
+    EL3HLT = 46, "Level 3 halted"
+    EL3RST = 47, "Level 3 reset"
+    ELNRNG = 48, "Link number out of range"
+    EUNATCH = 49, "Protocol driver not attached"
+    ENOCSI = 50, "No CSI structure available"
+    EL2HLT = 51, "Level 2 halted"
+    EBADE = 52, "Invalid exchange"
+    EBADR = 53, "Invalid request descriptor"
+    EXFULL = 54, "Exchange full"
+    ENOANO = 55, "No anode"
+    EBADRQC = 56, "Invalid request code"
+    EBADSLT = 57, "Invalid slot"
+    EDEADLOCK = 58, "File locking deadlock error"
+    EBFONT = 59, "Bad font file format"
+    ENOSTR = 60, "Device not a stream"
+    ENODATA = 61, "No data available"
+    ETIME = 62, "Timer expired"
+    ENOSR = 63, "Out of streams resources"
+    ENONET = 64, "Machine is not on the network"
+    ENOPKG = 65, "Package not installed"
+    EREMOTE = 66, "Object is remote"
+    ENOLINK = 67, "Link has been severed"
+    EADV = 68, "Advertise error"
+    ESRMNT = 69, "Srmount error"
+    ECOMM = 70, "Communication error on send"
+    EPROTO = 71, "Protocol error"
+    EMULTIHOP = 72, "Multihop attempted"
+    EDOTDOT = 73, "RFS specific error"
+    EBADMSG = 74, "Bad message"
+    EOVERFLOW = 75, "Value too large for defined data type"
+    ENOTUNIQ = 76, "Name not unique on network"
+    EBADFD = 77, "File descriptor in bad state"
+    EREMCHG = 78, "Remote address changed"
+    ELIBACC = 79, "Can not access a needed shared library"
+    ELIBBAD = 80, "Accessing a corrupted shared library"
+    ELIBSCN = 81, ".lib section in a.out corrupted"
+    ELIBMAX = 82, "Attempting to link in too many shared libraries"
+    ELIBEXEC = 83, "Cannot exec a shared library directly"
+    EILSEQ = 84, "Illegal byte sequence"
+    ERESTART = 85, "Interrupted system call should be restarted"
+    ESTRPIPE = 86, "Streams pipe error"
+    EUSERS = 87, "Too many users"
+    ENOTSOCK = 88, "Socket operation on non-socket"
+    EDESTADDRREQ = 89, "Destination address required"
+    EMSGSIZE = 90, "Message too long"
+    EPROTOTYPE = 91, "Protocol wrong type for socket"
+    ENOPROTOOPT = 92, "Protocol not available"
+    EPROTONOSUPPORT = 93, "Protocol not supported"
+    ESOCKTNOSUPPORT = 94, "Socket type not supported"
+    EOPNOTSUPP = 95, "Operation not supported"
+    EPFNOSUPPORT = 96, "Protocol family not supported"
+    EAFNOSUPPORT = 97, "Address family not supported by protocol"
+    EADDRINUSE = 98, "Address already in use"
+    EADDRNOTAVAIL = 99, "Cannot assign requested address"
+    ENETDOWN = 100, "Network is down"
+    ENETUNREACH = 101, "Network is unreachable"
+    ENETRESET = 102, "Network dropped connection on reset"
+    ECONNABORTED = 103, "Software caused connection abort"
+    ECONNRESET = 104, "Connection reset by peer"
+    ENOBUFS = 105, "No buffer space available"
+    EISCONN = 106, "Transport endpoint is already connected"
+    ENOTCONN = 107, "Transport endpoint is not connected"
+    ESHUTDOWN = 108, "Cannot send after transport endpoint shutdown"
+    ETOOMANYREFS = 109, "Too many references: cannot splice"
+    ETIMEDOUT = 110, "Connection timed out"
+    ECONNREFUSED = 111, "Connection refused"
+    EHOSTDOWN = 112, "Host is down"
+    EHOSTUNREACH = 113, "No route to host"
+    EALREADY = 114, "Operation already in progress"
+    EINPROGRESS = 115, "Operation now in progress"
+    ESTALE = 116, "Stale file handle"
+    EUCLEAN = 117, "Structure needs cleaning"
+    ENOTNAM = 118, "Not a XENIX named type file"
+    ENAVAIL = 119, "No XENIX semaphores available"
+    EISNAM = 120, "Is a named type file"
+    EREMOTEIO = 121, "Remote I/O error"
+    EDQUOT = 122, "Disk quota exceeded"
+    ENOMEDIUM = 123, "No medium found"
+    EMEDIUMTYPE = 124, "Wrong medium type"
+    ECANCELED = 125, "Operation canceled"
+    ENOKEY = 126, "Required key not available"
+    EKEYEXPIRED = 127, "Key has expired"
+    EKEYREVOKED = 128, "Key has been revoked"
+    EKEYREJECTED = 129, "Key was rejected by service"
+    EOWNERDEAD = 130, "Owner died"
+    ENOTRECOVERABLE = 131, "State not recoverable"
+    ERFKILL = 132, "Operation not possible due to RF-kill"
+    EHWPOISON = 133, "Memory page has hardware error"
+    ENOTSUP = 134, "Not supported parameter or option"
+
+    ELOCKUNMAPPED = 135, "Locked lock was unmapped"
+    ENOTACTIVE = 136, "Facility is not active"
+    EAUTH = 137, "Authentication error"
+    EBADARCH = 138, "Bad CPU type in executable"
+    EBADEXEC = 139, "Bad executable (or shared library)"
+    EBADMACHO = 140, "Malformed Mach-o file"
+    EDEVERR = 141, "Device error"
+    EFTYPE = 142, "Inappropriate file type or format"
+    ENEEDAUTH = 143, "Need authenticator"
+    ENOATTR = 144, "Attribute not found"
+    ENOPOLICY = 145, "Policy not found"
+    EPROCLIM = 146, "Too many processes"
+    EPROCUNAVAIL = 147, "Bad procedure for program"
+    EPROGMISMATCH = 148, "Program version wrong"
+    EPROGUNAVAIL = 149, "RPC prog. not avail"
+    EPWROFF = 150, "Device power is off"
+    EBADRPC = 151, "RPC struct is bad"
+    ERPCMISMATCH = 152, "RPC version wrong"
+    ESHLIBVERS = 153, "Shared library version mismatch"
+    ENOTCAPABLE = 154, "Capabilities insufficient"
+
+    ERESTARTSYS = 512
+    ERESTARTNOINTR = 513
+    ERESTARTNOHAND = 514, "restart if no handler.."
+    ENOIOCTLCMD = 515, "No ioctl command"
+    ERESTART_RESTARTBLOCK = 516, "restart by calling sys_restart_syscall"
+    EBADHANDLE = 521, "Illegal NFS file handle"
+    ENOTSYNC = 522, "Update synchronization mismatch"
+    EBADCOOKIE = 523, "Cookie is stale"
+    ENOTSUPP = 524, "Operation is not supported"
+    ETOOSMALL = 525, "Buffer or request is too small"
+    ESERVERFAULT = 526, "An untranslatable error occurred"
+    EBADTYPE = 527, "Type not supported by server"
+    EJUKEBOX = 528, "Request initiated, but will not complete before timeout"
+    EIOCBQUEUED = 529, "iocb queued, will get completion event"
+    EIOCBRETRY = 530, "iocb queued, will trigger a retry"
 
     def of(key: int | str | errno, /) -> errno:
         if isinstance(key, errno):
@@ -181,4 +223,8 @@ class errno(IntEnum):
             return errno[key]
         except KeyError as e:
             raise ValueError(key) from e
+
+
+globals().update((name, value) for name, value in errno.__dict__.items() if name.startswith("E"))
+__all__.extend(name for name in errno.__dict__ if name.startswith("E"))
 

@@ -29,6 +29,7 @@ from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_response import (
     get_status_code, headers_get, decompress_response, parse_response, 
 )
+from socket_keepalive import socket_keepalive
 from yarl import URL
 
 from .. import normalize_request_args, SupportsGeturl
@@ -147,7 +148,7 @@ def urlopen(
     method: str = "GET", 
     data=None, 
     headers=None, 
-    **request_args, 
+    **request_kwargs, 
 ) -> HTTPResponse:
     urlp = urlsplit(url)
     if urlp.scheme == "https":
@@ -158,9 +159,13 @@ def urlopen(
         method, 
         urlunsplit(urlp._replace(scheme="", netloc="")), 
         data, 
-        headers, 
+        {} if headers is None else headers, 
     )
-    return con.getresponse()
+    socket_keepalive(con.sock)
+    resp = con.getresponse()
+    setattr(resp, "method", method.upper())
+    setattr(resp, "url", url)
+    return resp
 
 
 urlopen_async = lambda *a, **k: to_thread(urlopen, *a, **k)

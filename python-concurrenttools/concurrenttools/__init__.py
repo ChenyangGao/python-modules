@@ -2,12 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 3)
+__version__ = (0, 1, 4)
 __all__ = [
-    "thread_batch", "thread_pool_batch", "async_batch", 
-    "threaded", "run_as_thread", "asynchronized", "run_as_async", 
-    "threadpool_map", "taskgroup_map", "conmap", "conmap_wrap", 
-    "iter_pages", "Return", 
+    "killable_executor", "thread_batch", "thread_pool_batch", 
+    "async_batch", "threaded", "run_as_thread", "asynchronized", 
+    "run_as_async", "threadpool_map", "taskgroup_map", "conmap", 
+    "conmap_wrap", "iter_pages", "Return", 
 ]
 
 from asyncio import (
@@ -20,6 +20,7 @@ from collections.abc import (
     Iterator, Mapping, 
 )
 from concurrent.futures import CancelledError, Executor, Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial, update_wrapper
 from inspect import isawaitable, iscoroutinefunction, signature, Signature
@@ -55,6 +56,15 @@ def has_keyword_async(request: Callable | Signature, /) -> bool:
     params = request.parameters
     param = params.get("async_")
     return bool(param and param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY))
+
+
+@contextmanager
+def killable_executor(executor: Executor, /):
+    try:
+        with executor:
+            yield executor
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def thread_batch[T, V](
@@ -299,9 +309,7 @@ def threadpool_map[T](
     max_workers: None | int = None, 
     kwargs: Mapping = {}, 
 ) -> Iterator[T]:
-    if max_workers is None or max_workers <= 0:
-        max_workers = min(32, (cpu_count() or 1) + 4)
-    if max_workers == 1:
+    if max_workers == 0:
         if arg_func is None:
             yield from map(partial(func, **kwargs), it, *its)
         else:
@@ -312,6 +320,8 @@ def threadpool_map[T](
                     continue
                 yield func(*args, arg, **kwargs)
     else:
+        if max_workers is None or max_workers <= 0:
+            max_workers = min(32, (cpu_count() or 1) + 4)
         queue: SimpleQueue[None | Future] = SimpleQueue()
         get, put = queue.get, queue.put_nowait
         executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -354,9 +364,7 @@ async def taskgroup_map[T](
     max_workers: None | int = None, 
     kwargs: Mapping = {}, 
 ) -> AsyncIterator[T]:
-    if max_workers is None or max_workers <= 0:
-        max_workers = 32
-    if max_workers == 1:
+    if max_workers == 0:
         if arg_func is None:
             async for ret in async_map(partial(func, **kwargs), it, *its):
                 yield cast(T, ret)
@@ -373,6 +381,8 @@ async def taskgroup_map[T](
                     ret = await ret
                 yield ret
     else:
+        if max_workers is None or max_workers <= 0:
+            max_workers = 32
         sema = AsyncSemaphore(max_workers)
         queue: AsyncQueue[None | AsyncFuture] = AsyncQueue()
         get, put = queue.get, queue.put_nowait

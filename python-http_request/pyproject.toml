@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-http_request"
-version = "0.1.6.1"
+version = "0.1.6.3"
 description = "Python http request utils."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -37,6 +37,7 @@ python-ensure = ">=0.0.1"
 python-filewrap = ">=0.2.8"
 python-texttools = ">=0.0.5"
 python-undefined = ">=0.0.3"
+socket_keepalive = ">=0.0.1"
 yarl = "*"
 
 [build-system]

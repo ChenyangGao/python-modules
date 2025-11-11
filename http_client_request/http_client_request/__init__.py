@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 10)
+__version__ = (0, 1, 1)
 __all__ = [
     "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
-    "ConnectionPool", "request", "set_keepalive", 
+    "ConnectionPool", "request", 
 ]
-
-import socket
 
 from array import array
 from collections import defaultdict, deque, UserString
@@ -21,13 +19,10 @@ from http.client import (
 )
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
-from io import BufferedReader
 from inspect import signature
 from os import PathLike
-from platform import system
 from select import select
-from socket import socket as Socket
-from ssl import SSLWantReadError
+from socket import socket
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
@@ -40,7 +35,7 @@ from dicttools import get_all_items
 from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import decompress_response, parse_response
-from property import funcproperty
+from socket_keepalive import socket_keepalive
 from urllib3 import HTTPResponse as Urllib3HTTPResponse, HTTPHeaderDict
 from undefined import undefined, Undefined
 from yarl import URL
@@ -70,71 +65,9 @@ def is_ipv6(host: str, /) -> bool:
         return False
 
 
-def sock_buf_readable(sock: Socket, /) -> bool:
+def sock_buf_readable(sock: socket, /) -> bool:
     rlist, *_ = select([sock], (), (), 0)
     return bool(rlist)
-
-
-def set_keepalive_linux(
-    sock: Socket, 
-    after_idle_sec: int = 1, 
-    interval_sec: int = 5, 
-    max_fails: int = 5, 
-):
-    """Set TCP keepalive on an open socket on Linux.
-    """
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec) # type: ignore
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
-
-
-def set_keepalive_osx(
-    sock: Socket, 
-    after_idle_sec: int = 1, 
-    interval_sec: int = 5, 
-    max_fails: int = 5, 
-):
-    """Set TCP keepalive on an open socket on MaxOSX.
-    """
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, after_idle_sec) # type: ignore
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
-
-
-def set_keepalive_win(
-    sock: Socket, 
-    after_idle_sec: int = 1, 
-    interval_sec: int = 5, 
-    max_fails: int = 5, 
-):
-    """Set TCP keepalive on an open socket on Windows.
-    """
-    sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, after_idle_sec * 1000, interval_sec * 1000)) # type: ignore
-
-
-def set_keepalive(
-    sock: Socket, 
-    after_idle_sec: int = 1, 
-    interval_sec: int = 3, 
-    max_fails: int = 5, 
-):
-    """Set TCP keepalive on an open socket on multiple platforms.
-
-    It activates after `after_idle_sec` second of idleness,
-    then sends a keepalive ping once every `interval_sec` seconds,
-    and closes the connection after `max_fails` failed ping (max_fails), or 15 seconds.
-    """
-    platform = system()
-    match platform:
-        case "Darwin":
-            return set_keepalive_osx(sock, after_idle_sec, interval_sec, max_fails)
-        case "Windows":
-            return set_keepalive_win(sock, after_idle_sec, interval_sec, max_fails)
-        case "Linux":
-            return set_keepalive_linux(sock, after_idle_sec, interval_sec, max_fails)
-    raise RuntimeError(f"unsupport platform {platform!r}")
 
 
 try:
@@ -142,6 +75,8 @@ try:
     from termios import FIONREAD
 
     def sock_bufsize(sock, /) -> int:
+        if sock is None:
+            return 0
         sock_size = array("i", [0])
         ioctl(sock, FIONREAD, sock_size)
         return sock_size[0]
@@ -149,6 +84,8 @@ except ImportError:
     from ctypes import byref, c_ulong, WinDLL # type: ignore
     ws2_32 = WinDLL("ws2_32")
     def sock_bufsize(sock, /) -> int:
+        if sock is None:
+            return 0
         FIONREAD = 0x4004667f
         b = c_ulong(0)
         ws2_32.ioctlsocket(sock.fileno(), FIONREAD, byref(b))
@@ -164,63 +101,22 @@ class HTTPResponse(BaseHTTPResponse):
     def __del__(self, /):
         self.close()
 
-    @funcproperty
-    def _fp(self, /) -> BufferedReader:
-        return self.fp
-
-    @property
-    def buffer_size(self, /) -> int:
-        fp = self._fp
-        sock = fp.raw._sock
-        sock.setblocking(False)            
-        try:
-            cache_size = len(fp.peek() or b"")
-            while True:
-                buffer_size = cache_size + sock_bufsize(sock)
-                if cache_size == (cache_size := len(fp.peek() or b"")):
-                    return buffer_size
-        except (BlockingIOError, SSLWantReadError):
-            return 0
-        finally:
-            sock.setblocking(True)
-
-    @property
-    def unbuffer_size(self, /) -> int:
-        method = self.__dict__.get("method", "").upper()
-        content_length = self.length
-        if method == "HEAD" or content_length == 0:
-            return 0
-        if content_length:
-            return content_length - self.tell() - self.buffer_size
-        sock = self._fp.raw._sock
-        if sock_bufsize(sock) == sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF):
-            return -1
-        else:
-            return 0
-
-    @property
-    def unread_size(self, /) -> int:
-        method = self.__dict__.get("method", "").upper()
-        content_length = self.length
-        if method == "HEAD" or content_length == 0:
-            return 0
-        sock = self._fp.raw._sock
-        if content_length:
-            return content_length - self.tell()
-        elif sock_bufsize(sock) == sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF):
-            return -1
-        else:
-            return self.buffer_size
-
     def _close_conn(self, /):
-        fp = self._fp = self.fp
+        fp = self.fp
         setattr(self, "fp", None)
-        try:
-            pool = self.pool
-            connection = self.connection
-            if pool and connection:
-                pool.return_connection(connection)
-        except AttributeError:
+        pool = getattr(self, "pool", None)
+        connection = getattr(self, "connection", None)
+        if pool and connection and not (
+            200 <= self.status < 300 and 
+            (length := self.length) and 
+            length - self._pos - len(fp.peek()) - sock_bufsize(connection.sock) > 1024 * 1024 * 10
+        ):
+            try:
+                self.read()
+            except OSError:
+                pass
+            pool.return_connection(connection)
+        else:
             fp.close()
 
     def get_urllib3_response(self, /) -> Urllib3HTTPResponse:
@@ -280,7 +176,7 @@ class HTTPConnectionMixin:
 
     def connect(self: Any, /):
         super().connect() # type: ignore
-        set_keepalive(self.sock)
+        socket_keepalive(self.sock)
 
     @property
     def response(self: Any, /) -> None | HTTPResponse:
@@ -366,35 +262,8 @@ class ConnectionPool:
             except IndexError:
                 break
             con.timeout = timeout
-            sock = con.sock
-            resp = con.response
-            if con.state == "Idle" or not sock:
-                pass
-            elif con.state == "Request-sent" or getattr(sock, "_closed"):
+            if con.state != "Idle" or getattr(con.sock, "_closed"):
                 con.close()
-            elif resp and 0 < resp.unbuffer_size <= 1024 * 1024:
-                try:
-                    resp.read()
-                except (ConnectionResetError, BrokenPipeError):
-                    con.close()
-            else:
-                try:
-                    sock.setblocking(False)
-                except OSError:
-                    con.close()
-                else:
-                    try:
-                        if Socket.recv(sock, 1):
-                            con.close()
-                    except BlockingIOError:
-                        pass
-                    except (ConnectionResetError, BrokenPipeError):
-                        con.close()
-                    try:
-                        if not getattr(sock, "_closed"):
-                            sock.setblocking(True)
-                    except OSError:
-                        pass
             return con
         if url.scheme == "https":
             return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)

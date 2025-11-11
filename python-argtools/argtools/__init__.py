@@ -53,6 +53,24 @@ class Args:
             return self.args == other.args and self.kwargs == other.kwargs
         return False
 
+    def __getitem__(self, idx: int | slice | str | tuple[int | slice | str, ...], /):
+        cls = type(self)
+        pget = self.args.__getitem__
+        if isinstance(idx, (int, slice)):
+            return cls(pget(idx))
+        kget = self.kwargs.__getitem__
+        if isinstance(idx, str):
+            return cls(idx=kget(idx))
+        else:
+            pargs, kargs = [], {}
+            add_parg = pargs.append
+            for idx_ in idx:
+                if isinstance(idx_, (int, slice)):
+                    add_parg(pget(idx_))
+                else:
+                    kargs[idx_] = kget(idx_)
+            return cls(*pargs, **kargs)
+
     def __iter__(self, /):
         return iter((self.args, self.kwargs))
 

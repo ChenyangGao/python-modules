@@ -260,6 +260,7 @@ def request[T](
             return response
         with response:
             if isinstance(parse, bool):
+                # NOTE: OR content = response.data
                 content = response.read()
                 if parse:
                     return parse_response(response, content)

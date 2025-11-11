@@ -37,6 +37,16 @@ class SupportsLower(Protocol):
     def lower(self, /) -> Self:
         ...
 
+class SupportsGetitem[V](Protocol):
+    def __getitem__(self, /, key) -> V:
+        ...
+
+class SupportsSetitem[V](Protocol):
+    def __setitem__(self, /, key, val: V):
+        ...
+
+
+
 
 def _lower[T](o: T, /) -> T:
     try:
@@ -56,66 +66,23 @@ def _hash_eq(x, y, hash_of_x=undefined, /) -> bool:
 
 
 @overload
-def get[K, V](
-    m: Mapping[K, V] | Iterable[tuple[K, V]], 
-    k, 
-    /, 
-    default: Undefined = undefined, 
-) -> V:
-    ...
-@overload
-def get[K, V, V2](
-    m: Mapping[K, V] | Iterable[tuple[K, V]], 
-    k, 
-    /, 
-    default: V2, 
-) -> V | V2:
-    ...
-def get[K, V, V2](
-    m: Mapping[K, V] | Iterable[tuple[K, V]], 
-    k, 
-    /, 
-    default: Undefined | V2 = undefined, 
-) -> V | V2:
-    if isinstance(m, Mapping):
-        try:
-            return m[k]
-        except (LookupError, TypeError):
-            pass
-    else:
-        try:
-            kh = hash(k)
-        except Exception:
-            for key, val in m:
-                if key is k:
-                    return val
-        else:
-            for key, val in m:
-                if _hash_eq(k, key, kh):
-                    return val
-    if default is undefined:
-        raise KeyError(k)
-    return cast(V2, default)
-
-
-@overload
-def get_first[K, V](
-    m: Mapping[K, V], 
+def get[V](
+    m: SupportsGetitem[V], 
     /, 
     *keys, 
     default: Undefined = undefined, 
 ) -> V:
     ...
 @overload
-def get_first[K, V, V2](
-    m: Mapping[K, V], 
+def get[V, V2](
+    m: SupportsGetitem[V], 
     /, 
     *keys, 
     default: V2, 
 ) -> V | V2:
     ...
-def get_first[K, V, V2](
-    m: Mapping[K, V], 
+def get[V, V2](
+    m: SupportsGetitem[V], 
     /, 
     *keys, 
     default: Undefined | V2 = undefined, 
@@ -130,6 +97,45 @@ def get_first[K, V, V2](
     return cast(V2, default)
 
 
+@overload
+def getitem[K, V](
+    m: Mapping[K, V] | Iterable[tuple[K, V]], 
+    *keys, 
+    default: Undefined = undefined, 
+) -> V:
+    ...
+@overload
+def getitem[K, V, V2](
+    m: Mapping[K, V] | Iterable[tuple[K, V]], 
+    *keys, 
+    default: V2, 
+) -> V | V2:
+    ...
+def getitem[K, V, V2](
+    m: Mapping[K, V] | Iterable[tuple[K, V]], 
+    *keys, 
+    default: Undefined | V2 = undefined, 
+) -> V | V2:
+    if isinstance(m, Mapping):
+        try:
+            return k, m[k]
+        except (LookupError, TypeError):
+            pass
+    else:
+        try:
+            kh = hash(k)
+        except Exception:
+            for key, val in m:
+                if key is k:
+                    return key, val
+        else:
+            for key, val in m:
+                if _hash_eq(k, key, kh):
+                    return val
+    if default is undefined:
+        raise KeyError(k)
+    return cast(V2, default)
+# TODO: rename to get
 @overload
 def get_first_item[K, V](
     m: Mapping[K, V], 
@@ -162,6 +168,7 @@ def get_first_item[K, V, K2, V2](
     return k, cast(V2, default)
 
 
+# TODO: rename to gets
 @overload
 def get_all[K, V](
     m: Mapping[K, V], 
@@ -188,7 +195,7 @@ def get_all[K, V, V2](
         return [m[k] for k in keys if k in m]
     return [get(m, k, default) for k in keys]
 
-
+# rename to getitems
 @overload
 def get_all_items[K, V](
     m: Mapping[K, V], 
@@ -250,8 +257,6 @@ def pop[K, V, V2](
     else:
         del m[cast(K, k)]
         return cast(V, v)
-
-
 @overload
 def pop_first[K, V](
     m: MutableMapping[K, V], 
@@ -314,8 +319,6 @@ def pop_first_item[K, V, K2, V2](
     if default is undefined:
         raise KeyError(*keys)
     return k, cast(V2, default)
-
-
 @overload
 def pop_all[K, V](
     m: MutableMapping[K, V], 
@@ -927,4 +930,83 @@ class KeyedDict[K, V, K2](dict[K2, V]):
 
 class KeyLowerDict[K: SupportsLower, V](KeyedDict[K, V, K]):
     __key__ = methodcaller("lower")
+
+
+
+
+
+
+from collections.abc import ItemsView, KeysView, Mapping, ValuesView
+from undefined import undefined
+
+def keys[K, V](m: Mapping[K, V], /) -> KeysView:
+    try:
+        return mapping.keys()
+    except AttributeError:
+        return KeysView(mapping)
+
+def values[K, V](m: Mapping[K, V], /) -> ValuesView:
+    try:
+        return mapping.values()
+    except AttributeError:
+        return ValuesView(mapping)
+
+def items[K, V](m: Mapping[K, V], /) -> ItemsView:
+    try:
+        return m.items()
+    except (AttributeError, TypeError):
+        return ItemsView(m)
+
+def keyof[K, V](m: Mapping[K, V], value, /) -> K:
+    for key, val in items(m):
+        if val is value or val == value:
+            return key
+    raise ValueError(value)
+
+# OR SupportGetitem, LookupError
+def getitem(m: Mapping, key, /, default=undefined):
+    try:
+        return m[key]
+    except KeyError:
+        if default is undefined:
+            raise
+        return default
+
+
+def swap_key_value(m, /):
+    return {v: k for k, v in items(m)}
+
+def value_keys(m, /):
+    r = {}
+    for k, v in items(m):
+        if v in r:
+            r[v].append(k)
+        else:
+            r[v] = [k]
+    return r
+
+def get_keys(m: Mapping, /, keys, default=undefined):
+    return tuple(get(m, key, default) for key in keys)
+
+
+def multi_groupdict(it, key, *keys):
+    d = {}
+    *keys, key = key, *keys
+    for e in it:
+        dd = d
+        for key_ in keys:
+            k = key_(e)
+            if k in dd:
+                dd = dd[k]
+            else:
+                dd[k] = dd = {}
+        k = key(e)
+        if k in dd:
+            dd[k].append(e)
+        else:
+            dd[k] = [e]
+    return d
+
+
+
 

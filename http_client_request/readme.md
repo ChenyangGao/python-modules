@@ -1,15 +1,15 @@
-# http.client request extension.
+# Python set socket keepalive.
 
 ## Installation
 
-You can install via [pypi](https://pypi.org/project/http_client_request/)
+You can install via [pypi](https://pypi.org/project/socket_keepalive/)
 
 ```console
-pip install -U http_client_request
+pip install -U socket_keepalive
 ```
 
 ## Usage
 
 ```python
-from http_client_request import request
+from socket_keepalive import socket_keepalive
 ```

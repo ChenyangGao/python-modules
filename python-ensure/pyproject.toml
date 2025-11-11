@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-ensure"
-version = "0.0.1"
+version = "0.0.2"
 description = "Python functions used to ensure something."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

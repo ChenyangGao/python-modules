@@ -12,17 +12,18 @@ __all__ = [
     "flatten", "async_flatten", "collect", "async_collect", 
     "group_collect", "async_group_collect", "iter_unique", 
     "async_iter_unique", "wrap_iter", "wrap_aiter", "peek_iter", "peek_aiter", 
-    "acc_step", "cut_iter", "bfs_gen", "context", "backgroud_loop", 
+    "acc_step", "cut_iter", "context", "backgroud_loop", "gen_startup", 
+    "async_gen_startup", "do_iter", "do_aiter", "bfs_iter", "bfs_gen", 
 ]
 
 from asyncio import create_task, sleep as async_sleep
 from builtins import map as _map, filter as _filter, zip as _zip
 from collections import defaultdict, deque
 from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, 
-    Collection, Container, Coroutine, Generator, Iterable, Iterator, 
-    Mapping, MutableMapping, MutableSet, MutableSequence, Sequence, 
-    ValuesView, 
+    AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Buffer,
+    Callable, Collection, Container, Coroutine, Generator, Iterable, 
+    Iterator, Mapping, MutableMapping, MutableSet, MutableSequence, 
+    Sequence, ValuesView, 
 )
 from contextlib import (
     asynccontextmanager, contextmanager, ExitStack, AsyncExitStack, 
@@ -30,6 +31,7 @@ from contextlib import (
 )
 from copy import copy
 from dataclasses import dataclass
+from functools import update_wrapper
 from itertools import batched, chain as _chain, pairwise
 from inspect import iscoroutinefunction, signature
 from sys import _getframe, exc_info
@@ -1291,48 +1293,6 @@ def cut_iter(
 
 
 @overload
-def bfs_gen[T](
-    initial: T, 
-    /, 
-    unpack_iterator: Literal[False] = False, 
-) -> Generator[T, T | None, None]:
-    ...
-@overload
-def bfs_gen[T](
-    initial: T | Iterator[T], 
-    /, 
-    unpack_iterator: Literal[True], 
-) -> Generator[T, T | None, None]:
-    ...
-def bfs_gen[T](
-    initial: T | Iterator[T], 
-    /, 
-    unpack_iterator: bool = False, 
-) -> Generator[T, T | None, None]:
-    """辅助函数，返回生成器，用来简化广度优先遍历
-    """
-    dq: deque[T] = deque()
-    push, pushmany, pop = dq.append, dq.extend, dq.popleft
-    if isinstance(initial, Iterator) and unpack_iterator:
-        pushmany(initial)
-    else:
-        push(initial) # type: ignore
-    while dq:
-        args: None | T = yield (val := pop())
-        if unpack_iterator:
-            while args is not None:
-                if isinstance(args, Iterator):
-                    pushmany(args)
-                else:
-                    push(args)
-                args = yield val
-        else:
-            while args is not None:
-                push(args)
-                args = yield val
-
-
-@overload
 def context[T](
     func: Callable[..., T], 
     *ctxs: ContextManager, 
@@ -1470,4 +1430,71 @@ def backgroud_loop(
                 if use_default_call:
                     print("\r\x1b[K", end="")
         return ctx()
+
+
+def gen_startup[**Args, G: Generator](func: Callable[Args, G], /):
+    def wrapper(*args: Args.args, **kwds: Args.kwargs) -> G:
+        gen = func(*args, **kwds)
+        next(gen)
+        return gen
+    return update_wrapper(wrapper, func)
+
+
+def async_gen_startup[**Args, G: AsyncGenerator](func: Callable[Args, G], /):
+    async def wrapper(*args: Args.args, **kwds: Args.kwargs) -> G:
+        gen = func(*args, **kwds)
+        await anext(gen)
+        return gen
+    return update_wrapper(wrapper, func)
+
+
+def do_iter[T](
+    func: Callable[[], T] | Iterable[T], 
+    /, 
+    sentinel=undefined, 
+    sentinel_excs: type[BaseException] | tuple[type[BaseException], ...] = (), 
+) -> Iterator[T]:
+    try:
+        yield from iter(func if callable(func) else iter(func).__next__, sentinel)
+    except sentinel_excs:
+        pass
+
+
+async def do_aiter[T](
+    func: Callable[[], T] | Callable[[], Awaitable[T]] | Iterable[T] | AsyncIterable[T],  
+    /, 
+    sentinel=undefined, 
+    sentinel_excs: type[BaseException] | tuple[type[BaseException], ...] = (), 
+) -> AsyncIterator[T]:
+    if callable(func):
+        func = ensure_async(func)
+    else:
+        func = ensure_aiter(func).__anext__
+    try:
+        while True:
+            v = await func()
+            if v is sentinel:
+                break
+            yield v
+    except StopAsyncIteration:
+        pass
+    except sentinel_excs:
+        pass
+
+
+def bfs_iter[T](*initials: T) -> tuple[Iterator[T], Callable[[T], None]]:
+    dq = deque(initials)
+    return do_iter(dq.popleft, sentinel_excs=IndexError), dq.append
+
+
+@gen_startup
+def bfs_gen[T](*initials) -> Generator[None | T, T | None, None]:
+    dq = deque(initials)
+    push, pop = dq.append, dq.popleft
+    try:
+        p = yield None
+        while True:
+            p = yield (pop() if p is None else push(p))
+    except IndexError:
+        pass
 

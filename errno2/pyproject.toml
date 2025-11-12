@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "errno2"
-version = "0.0.3"
+version = "0.0.5"
 description = "Python another errno."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

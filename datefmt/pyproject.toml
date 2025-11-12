@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "python-texttools"
-version = "0.0.6"
-description = "Python texttools."
+name = "datefmt"
+version = "0.0.1.1"
+description = "Converting between Unix timestamps and standard date string formats."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/python-texttools"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/python-texttools"
-keywords = ["text", "tools"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/datefmt"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/datefmt"
+keywords = ["datetime", "format"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
@@ -27,11 +27,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-wcwidth = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "texttools"
+include = "datefmt"

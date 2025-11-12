@@ -4,10 +4,18 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["errno"]
-__version__ = (0, 0, 3)
+__all__ = ["errno", "strerror", "errorcode", "errno2error"]
+__version__ = (0, 0, 5)
 
 from enum import IntEnum
+from typing import Final, Never
+
+
+def issubcls(a, b, /) -> bool:
+    try:
+        return issubclass(a, b)
+    except TypeError:
+        return False
 
 
 class errno(IntEnum):
@@ -198,9 +206,9 @@ class errno(IntEnum):
     ESHLIBVERS = 153, "Shared library version mismatch"
     ENOTCAPABLE = 154, "Capabilities insufficient"
 
-    ERESTARTSYS = 512
-    ERESTARTNOINTR = 513
-    ERESTARTNOHAND = 514, "restart if no handler.."
+    ERESTARTSYS = 512, "Error RESTART SYStem call"
+    ERESTARTNOINTR = 513, "Error RESTART NO INTerRupt"
+    ERESTARTNOHAND = 514, "Error RESTART NO HANDler"
     ENOIOCTLCMD = 515, "No ioctl command"
     ERESTART_RESTARTBLOCK = 516, "restart by calling sys_restart_syscall"
     EBADHANDLE = 521, "Illegal NFS file handle"
@@ -214,6 +222,7 @@ class errno(IntEnum):
     EIOCBQUEUED = 529, "iocb queued, will get completion event"
     EIOCBRETRY = 530, "iocb queued, will trigger a retry"
 
+    @staticmethod
     def of(key: int | str | errno, /) -> errno:
         if isinstance(key, errno):
             return key
@@ -224,6 +233,47 @@ class errno(IntEnum):
         except KeyError as e:
             raise ValueError(key) from e
 
+    def error(self, /, *args, **kwds) -> BaseException:
+        if args and issubcls(args[0], BaseException):
+            exctype = args[0]
+            args = args[1:]
+        else:
+            exctype = errno2error.get(self, OSError)
+        if not (args or kwds):
+            args = self.description,
+        return exctype(self, *args, **kwds)
+
+    def throw(self, /, *args, **kwds) -> Never:
+        raise self.error(*args, **kwds)
+
+
+def strerror(key: int | str | errno, /) -> str:
+    return errno.of(key).description
+
+
+errorcode: Final = {value: name  for name, value in errno.__dict__.items() if name.startswith("E")}
+errno2error: Final = {
+    errno.EPERM: PermissionError, 
+    errno.ENOENT: FileNotFoundError, 
+    errno.ESRCH: ProcessLookupError, 
+    errno.EINTR: InterruptedError, 
+    errno.ECHILD: ChildProcessError, 
+    errno.EAGAIN: BlockingIOError, 
+    errno.EACCES: PermissionError, 
+    errno.EEXIST: FileExistsError, 
+    errno.ENOTDIR: NotADirectoryError, 
+    errno.EISDIR: IsADirectoryError, 
+    errno.EPIPE: BrokenPipeError, 
+    errno.EWOULDBLOCK: BlockingIOError, 
+    errno.ECONNABORTED: ConnectionAbortedError, 
+    errno.ECONNRESET: ConnectionResetError, 
+    errno.ESHUTDOWN: BrokenPipeError, 
+    errno.ETIMEDOUT: TimeoutError, 
+    errno.ECONNREFUSED: ConnectionRefusedError, 
+    errno.EALREADY: BlockingIOError, 
+    errno.EINPROGRESS: BlockingIOError, 
+    errno.ENOTCAPABLE: PermissionError, 
+}
 
 globals().update((name, value) for name, value in errno.__dict__.items() if name.startswith("E"))
 __all__.extend(name for name in errno.__dict__ if name.startswith("E"))

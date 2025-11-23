@@ -2,7 +2,7 @@
 # encoding: utf
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
+__version__ = (0, 0, 4)
 __all__ = [
     "DownloadTaskStatus", "DownloadProgress", 
     "DownloadTask", "AsyncDownloadTask", 
@@ -38,20 +38,11 @@ from asynctools import ensure_aiter, ensure_async, as_thread
 from concurrenttools import run_as_thread
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, bio_skip_iter, bio_skip_async_iter, SupportsWrite
 from http_response import get_filename, get_length, is_chunked, is_range_request
-from urlopen import urlopen
+from http_request.extension.request import urlopen
 
 
 DEFAULT_ITER_BYTES = lambda resp: bio_chunk_iter(resp, chunksize=COPY_BUFSIZE)
 DEFAULT_ASYNC_ITER_BYTES = lambda resp: bio_chunk_async_iter(resp, chunksize=COPY_BUFSIZE)
-
-try:
-    from aiofile import async_open, FileIOWrapperBase
-    aiofile_installed = True
-except ImportError:
-    aiofile_installed = False
-else:
-    if "__getattr__" not in FileIOWrapperBase.__dict__:
-        setattr(FileIOWrapperBase, "__getattr__", lambda self, attr, /: getattr(self.file, attr))
 
 
 class DownloadTaskStatus(IntEnum):
@@ -562,20 +553,12 @@ async def download_async_iter(
             file = abspath(fsdecode(file))
             if isdir(file):
                 file = joinpath(file, get_filename(resp, "download"))
-            if aiofile_installed:
-                try:
-                    fdst = await async_open(file, "ab" if resume else "wb")
-                except FileNotFoundError:
-                    makedirs(dirname(file), exist_ok=True)
-                    fdst = await async_open(file, "ab" if resume else "wb")
-                file_async_close = fdst.close
-            else:
-                try:
-                    fdst = open(file, "ab" if resume else "wb")
-                except FileNotFoundError:
-                    makedirs(dirname(file), exist_ok=True)
-                    fdst = open(file, "ab" if resume else "wb")
-                file_async_close = as_thread(fdst.close)
+            try:
+                fdst = open(file, "ab" if resume else "wb")
+            except FileNotFoundError:
+                makedirs(dirname(file), exist_ok=True)
+                fdst = open(file, "ab" if resume else "wb")
+            file_async_close = as_thread(fdst.close)
 
         extra = {"url": url, "file": file, "resume": resume}
         filesize = 0

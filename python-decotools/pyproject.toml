@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "python-decotools"
-version = "0.0.2"
-description = "Python decorator tools."
+version = "0.0.3"
+description = "Tools for making decorators"
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
@@ -27,8 +27,7 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-python-partial = ">=0.0.6"
-python-undefined = ">=0.0.3"
+python-undefined = "*"
 
 [build-system]
 requires = ["poetry-core"]

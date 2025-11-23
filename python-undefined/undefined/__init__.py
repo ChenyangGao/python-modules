@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
-__all__ = ["Undefined", "undefined"]
+__version__ = (0, 0, 4)
+__all__ = ["Undefined", "undefined", "is_undefined"]
 
-from typing import final, Never, Self
+from typing import final, Self
+from typing_extensions import TypeIs
 
 
+@final
 class Undefined:
     """Just like `None` and `NoneType`, which are used to mark missing values.
     """
@@ -30,4 +32,8 @@ class Undefined:
 
 
 undefined = Undefined()
+
+
+def is_undefined(o: object, /) -> TypeIs[Undefined]:
+    return isinstance(o, Undefined)
 

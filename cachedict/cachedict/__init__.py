@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "SizedDict", "LIFODict", "FIFODict", "RRDict", "LRUDict", "MRUDict", 
     "TTLDict", "LFUDict", "PriorityDict", "ExpireDict", "TLRUDict", 
     "FastFIFODict", "FastLRUDict", 
 ]
 
-from collections import deque, UserDict
+from collections import deque, defaultdict, UserDict
 from collections.abc import Callable, Hashable, Iterable, Iterator
 from copy import copy
 from dataclasses import dataclass, field
@@ -38,16 +38,18 @@ class CleanedKeyError(KeyError):
         self.value = value
 
 
-class SizedDict[K: Hashable, V](dict[K, V]):
+class SizedDict[K: Hashable, V](defaultdict[K, V]):
     "dictionary with maxsize"
-    __slots__ = ("maxsize", "auto_clean")
+    __slots__ = ("maxsize", "auto_clean", "default_factory")
 
     def __init__(
         self, 
         /, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
+        super().__init__(default_factory)
         self.maxsize = maxsize
         self.auto_clean = auto_clean
 
@@ -321,7 +323,7 @@ class SizedDict[K: Hashable, V](dict[K, V]):
 
 class LIFODict[K: Hashable, V](SizedDict[K, V]):
     "Last In First Out (FIFO)"
-    __slots__ = ("maxsize", "auto_clean")
+    __slots__ = ("maxsize", "auto_clean", "default_factory")
 
     def __setitem__(self, key: K, value: V, /):
         self.discard(key)
@@ -330,7 +332,7 @@ class LIFODict[K: Hashable, V](SizedDict[K, V]):
 
 class FIFODict[K: Hashable, V](LIFODict[K, V]):
     "First In First Out (FIFO)"
-    __slots__ = ("maxsize", "auto_clean")
+    __slots__ = ("maxsize", "auto_clean", "default_factory")
 
     def popitem(self, /) -> tuple[K, V]:
         try:
@@ -349,15 +351,16 @@ class FIFODict[K: Hashable, V](LIFODict[K, V]):
 
 class RRDict[K: Hashable, V](SizedDict[K, V]):
     "Random Replacement (RR)"
-    __slots__ = ("maxsize", "auto_clean", "_keys", "_key_to_idx")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "_keys", "_key_to_idx")
 
     def __init__(
         self, 
         /, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
-        super().__init__(maxsize, auto_clean)
+        super().__init__(maxsize, auto_clean=auto_clean, default_factory=default_factory)
         self._keys: list[K] = []
         self._key_to_idx: dict[K, int] = {}
 
@@ -405,7 +408,7 @@ class RRDict[K: Hashable, V](SizedDict[K, V]):
 
 class LRUDict[K: Hashable, V](FIFODict[K, V]):
     "Least Recently Used (LRU)"
-    __slots__ = ("maxsize", "auto_clean")
+    __slots__ = ("maxsize", "auto_clean", "default_factory")
 
     def __getitem__(self, key: K, /) -> V:
         value = super().__getitem__(key)
@@ -428,15 +431,16 @@ class KeyAlive[K]:
 
 class MRUDict[K: Hashable, V](SizedDict[K, V]):
     "Most Recently Used (MRU)"
-    __slots__ = ("maxsize", "auto_clean", "_key_cache", "_key_deque")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "_key_cache", "_key_deque")
 
     def __init__(
         self, 
         /, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
-        super().__init__(maxsize, auto_clean)
+        super().__init__(maxsize, auto_clean=auto_clean, default_factory=default_factory)
         self._key_cache: dict[K, KeyAlive[K]] = {}
         self._key_deque: deque[KeyAlive[K]] = deque()
 
@@ -486,7 +490,7 @@ class MRUDict[K: Hashable, V](SizedDict[K, V]):
 
 class TTLDict[K, V](SizedDict[K, V]):
     "Time-To-Live (TTL)"
-    __slots__ = ("maxsize", "auto_clean", "ttl", "is_lru", "_start_time_table")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "ttl", "is_lru", "_start_time_table")
 
     def __init__(
         self, 
@@ -495,8 +499,9 @@ class TTLDict[K, V](SizedDict[K, V]):
         is_lru: bool = False, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
-        super().__init__(maxsize, auto_clean)
+        super().__init__(maxsize, auto_clean=auto_clean, default_factory=default_factory)
         self.ttl = ttl
         self.is_lru = is_lru
         self._start_time_table: dict[K, float] = {}
@@ -639,7 +644,7 @@ class Counter[K: Hashable](UserDict[K, int]):
 
 class LFUDict[K: Hashable, V](SizedDict[K, V]):
     "Least Frequently Used (LFU)"
-    __slots__ = ("maxsize", "auto_clean", "reset_when_setitem", "reset_when_delitem", "_counter")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "reset_when_setitem", "reset_when_delitem", "_counter")
 
     def __init__(
         self, 
@@ -648,8 +653,9 @@ class LFUDict[K: Hashable, V](SizedDict[K, V]):
         auto_clean: bool = True, 
         reset_when_setitem: bool = False, 
         reset_when_delitem: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
-        super().__init__(maxsize, auto_clean)
+        super().__init__(maxsize, auto_clean=auto_clean, default_factory=default_factory)
         self._counter: Counter[K] = Counter()
         self.reset_when_setitem = reset_when_setitem
         self.reset_when_delitem = reset_when_delitem
@@ -686,7 +692,7 @@ class KeyPriority[F, K]:
 
 class PriorityDict[K: Hashable, V](SizedDict[K, V]):
     "each value with a priority value"
-    __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
         self, 
@@ -696,8 +702,9 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
         is_lru: bool = False, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
-        super().__init__(maxsize, auto_clean)
+        super().__init__(maxsize, auto_clean, default_factory=default_factory)
         self.prioritize = prioritize
         self.watermarker = watermarker
         self.is_lru = is_lru
@@ -800,7 +807,7 @@ class PriorityDict[K: Hashable, V](SizedDict[K, V]):
 
 class ExpireDict[K, V](PriorityDict[K, V]):
     "each value with an expiration timestamp"
-    __slots__ = ("maxsize", "auto_clean", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
+    __slots__ = ("maxsize", "auto_clean", "default_factory", "prioritize", "watermarker", "is_lru", "_heap", "_key_to_entry")
 
     def __init__(
         self, 
@@ -810,6 +817,7 @@ class ExpireDict[K, V](PriorityDict[K, V]):
         is_lru: bool = False, 
         maxsize: int = 0, 
         auto_clean: bool = True, 
+        default_factory: None | Callable[[], V] = None, 
     ):
         if isinstance(expire_timer, (int, float)) or not callable(expire_timer):
             ttl = expire_timer
@@ -823,6 +831,7 @@ class ExpireDict[K, V](PriorityDict[K, V]):
             is_lru=is_lru, 
             maxsize=maxsize, 
             auto_clean=auto_clean, 
+            default_factory=default_factory, 
         )
 
 

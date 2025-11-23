@@ -1,11 +1,11 @@
-# Python decorator tools.
+# Tools for making decorators.
 
 ## Installation
 
 You can install from [pypi](https://pypi.org/project/python-decotools/)
 
 ```console
-pip install -U decotools
+pip install -U python-decotools
 ```
 
 ## Usage

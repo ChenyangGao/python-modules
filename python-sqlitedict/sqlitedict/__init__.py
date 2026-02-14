@@ -41,6 +41,7 @@ class SqliteDict(MutableMapping):
         uri: bool = False, 
         lock=None, 
     ):
+        self.dbfile = dbfile
         self.con = con = connect(
             dbfile, 
             autocommit=True, 

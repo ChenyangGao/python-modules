@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 7)
 __all__ = ["urlopen", "request", "download"]
 
 from collections import UserString
@@ -23,7 +23,6 @@ from urllib.request import (
     HTTPSHandler, HTTPRedirectHandler, OpenerDirector, Request, 
 )
 
-from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies, update_cookies
 from dicttools import dict_map, iter_items
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
@@ -141,7 +140,20 @@ setattr(_opener, "cookies", _cookies)
 class NoRedirectHandler(HTTPRedirectHandler):
 
     def redirect_request(self, /, *args, **kwds):
-        return None
+        return
+
+
+class RedirectHandler(HTTPRedirectHandler):
+
+    def redirect_request(self, /, req, fp, *args, **kwds):
+        if not (300 <= fp.status < 400):
+            return
+        try:
+            ret = super().redirect_request(req, fp, *args, **kwds)
+            fp.read()
+            return ret
+        finally:
+            fp.close()
 
 
 def urlopen(
@@ -255,8 +267,14 @@ def urlopen(
     if cookies is None:
         cookies = response_cookies
     add_handler(HTTPCookieProcessor(response_cookies))
-    if not follow_redirects:
-        add_handler(NoRedirectHandler())
+    try:
+        i = next(i for i, h in enumerate(handlers) if isinstance(h, HTTPRedirectHandler))
+        handlers[i] = RedirectHandler() if follow_redirects else NoRedirectHandler()
+    except StopIteration:
+        if follow_redirects:
+            add_handler(RedirectHandler())
+        else:
+            add_handler(NoRedirectHandler())
     opener = build_opener(*handlers)
     setattr(opener, "cookies", cookies)
     try:
@@ -338,7 +356,7 @@ def request[T](
     raise_for_status: bool = True, 
     cookies: None | CookieJar | BaseCookie = None, 
     *, 
-    parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
+    parse: Callable[[HTTPResponse, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -354,7 +372,7 @@ def request[T](
     raise_for_status: bool = True, 
     cookies: None | CookieJar | BaseCookie = None, 
     *, 
-    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
+    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] = None, 
     **request_kwargs, 
 ) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
     try:
@@ -371,26 +389,29 @@ def request[T](
             **request_kwargs, 
         )
     except HTTPError as e:
-        if raise_for_status:
-            raise
         response = getattr(e, "file")
+        if raise_for_status and response.status >= 400:
+            setattr(response, "content", response.read())
+            raise
     if parse is None:
+        if method == "HEAD":
+            response.read()
         return response
     elif parse is ...:
-        response.close()
+        try:
+            if (method == "HEAD" or 
+                (length := get_length(response)) is not None and length <= 10485760
+            ):
+                response.read()
+        finally:
+            response.close()
         return response
-    with response:
-        if isinstance(parse, bool):
-            data = decompress_response(response.read(), response)
-            if parse:
-                return parse_response(response, data)
-            return data
-        ac = argcount(parse)
-        if ac == 1:
-            return cast(Callable[[HTTPResponse], T], parse)(response)
-        else:
-            data = decompress_response(response.read(), response)
-            return cast(Callable[[HTTPResponse, bytes], T], parse)(response, data)
+    content = decompress_response(response.read(), response)
+    if isinstance(parse, bool):
+        if not parse:
+            return content
+        parse = cast(Callable, parse_response)
+    return parse(response, content)
 
 
 def download(
@@ -518,3 +539,6 @@ def download(
             reporthook_close()
     return file
 
+# BUG: 经常会报错 URLError: <urlopen error [Errno 32] Broken pipe>
+# BUG: URLError: <urlopen error [Errno 8] nodename nor servname provided, or not known>
+# BUG: RemoteDisconnected: Remote end closed connection without response

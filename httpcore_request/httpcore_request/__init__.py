@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 6)
+__version__ = (0, 0, 7)
 __all__ = [
     "ResponseWrapper", "HTTPStatusError", "request", 
     "request_sync", "request_async", 
@@ -15,9 +15,9 @@ from collections.abc import (
     AsyncIterable, AsyncIterator, Awaitable, Buffer, Callable, 
     Iterable, Iterator, Mapping, 
 )
-from contextlib import aclosing, closing
 from copy import copy
 from dataclasses import dataclass
+from functools import cached_property
 from http import HTTPStatus
 from http.client import HTTPMessage
 from http.cookiejar import CookieJar
@@ -30,12 +30,11 @@ from urllib.parse import urljoin
 from urllib.request import Request as HTTPRequest
 from warnings import warn
 
-from argtools import argcount
 from cookietools import cookies_to_str
 from dicttools import get_all_items
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import decompress_response, parse_response
+from http_response import decompress_response, parse_response, get_length
 from httpcore import AsyncConnectionPool, ConnectionPool, Request, Response
 from httpcore._models import (
     enforce_bytes, enforce_headers, enforce_stream, enforce_url, 
@@ -83,9 +82,6 @@ class ResponseWrapper:
     def __init__(self, request: Request, response: Response):
         self.request = request
         self.response = response
-        headers = self.headers = HTTPMessage()
-        for key, val in response.headers:
-            headers.set_raw(str(key, "latin-1"), str(val, "latin-1"))
 
     def __del__(self, /):
         if stream := self.response.stream:
@@ -107,13 +103,35 @@ class ResponseWrapper:
         return f"{type(self).__qualname__}({self.response!r})"
 
     @property
+    def closed(self, /) -> bool:
+        try:
+            return self.response.stream._closed # type: ignore
+        except AttributeError:
+            return True
+
+    @cached_property
     def code(self, /) -> int:
         return self.response.status
+
+    @cached_property
+    def headers(self, /) -> HTTPMessage:
+        headers = HTTPMessage()
+        for key, val in self.response.headers:
+            headers.set_raw(str(key, "latin-1"), str(val, "latin-1"))
+        return headers
+
+    @cached_property
+    def method(self, /) -> str:
+        return str(self.request.method, "ascii")
+
+    @cached_property
+    def url(self, /) -> str:
+        return str(bytes(self.request.url), "utf-8")
 
     def info(self, /) -> HTTPMessage:
         return self.headers
 
-    def is_redirect(self, /):
+    def is_redirect(self, /) -> bool:
         return 300 <= self.response.status < 400
 
     def raise_for_status(self, /):
@@ -134,6 +152,28 @@ class ResponseWrapper:
                 response=self, 
                 response_body=content, 
             )
+
+    def finalize(self, /, maxsize: int = 0):
+        resp = self.response
+        try:
+            if (self.method == "HEAD" or 
+                maxsize <= 0 or
+                (length := get_length(resp)) is not None and length <= maxsize
+            ):
+                resp.read()
+        finally:
+            resp.close()
+
+    async def async_finalize(self, /, maxsize: int = 0):
+        resp = self.response
+        try:
+            if (self.method == "HEAD" or 
+                maxsize <= 0 or
+                (length := get_length(resp)) is not None and length <= maxsize
+            ):
+                await resp.aread()
+        finally:
+            await resp.aclose()
 
 
 @dataclass
@@ -228,7 +268,7 @@ def request_sync[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
-    parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T], 
+    parse: Callable[[ResponseWrapper, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -245,7 +285,7 @@ def request_sync[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | ConnectionPool = _DEFAULT_CLIENT, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T] = None, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] = None, 
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
     if session is None:
@@ -345,30 +385,25 @@ def request_sync[T](
                     cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
                     request.headers[-1] = (b"cookie", cookie_bytes)
                 request.headers = include_request_headers(raw_headers, url=request.url, content=None)
-                if request.method != "HEAD":
-                    response.read()
-                response.close()
+                response.finalize()
                 continue
         elif raise_for_status and status_code >= 400:
-            response.read()
+            response.finalize()
             response.raise_for_status()
         if parse is None:
+            if response.method == "HEAD":
+                response.finalize()
             return response
         elif parse is ...:
-            response.close()
+            response.finalize(10485760) # 10 MB
             return response
-        with closing(response):
-            if isinstance(parse, bool):
-                content = decompress_response(response.read(), response)
-                if parse:
-                    return parse_response(response, content)
+        response.finalize()
+        content = decompress_response(response.content, response)
+        if isinstance(parse, bool):
+            if not parse:
                 return content
-            ac = argcount(parse)
-            if ac == 1:
-                return cast(Callable[[ResponseWrapper], T], parse)(response)
-            else:
-                content = decompress_response(response.read(), response)
-                return cast(Callable[[ResponseWrapper, bytes], T], parse)(response, content)
+            parse = cast(Callable, parse_response)
+        return parse(response, content)
 
 
 @overload
@@ -439,7 +474,7 @@ async def request_async[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]], 
+    parse: Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -456,7 +491,7 @@ async def request_async[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | AsyncConnectionPool = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] = None, 
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
     if session is None:
@@ -559,33 +594,28 @@ async def request_async[T](
                     cookie_bytes = bytes(cookies_to_str(response_cookies if cookies is None else cookies, request_url), "latin-1")
                     request.headers[-1] = (b"cookie", cookie_bytes)
                 request.headers = include_request_headers(raw_headers, url=request.url, content=None)
-                if request.method != "HEAD":
-                    await response.aread()
-                await response.aclose()
+                await response.async_finalize()
                 continue
         elif raise_for_status and status_code >= 400:
-            await response.aread()
+            await response.async_finalize()
             response.raise_for_status()
         if parse is None:
+            if response.method == "HEAD":
+                await response.async_finalize()
             return response
         elif parse is ...:
-            await response.aclose()
+            await response.async_finalize(10485760)
             return response
-        async with aclosing(response):
-            if isinstance(parse, bool):
-                content = decompress_response(await response.aread(), response)
-                if parse:
-                    return parse_response(response, content)
+        await response.async_finalize()
+        content = decompress_response(response.content, response)
+        if isinstance(parse, bool):
+            if not parse:
                 return content
-            ac = argcount(parse)
-            if ac == 1:
-                ret = cast(Callable[[ResponseWrapper], T], parse)(response)
-            else:
-                content = decompress_response(await response.aread(), response)
-                ret = cast(Callable[[ResponseWrapper, bytes], T], parse)(response, content)
-            if isawaitable(ret):
-                ret = await ret
-            return ret
+            parse = cast(Callable, parse_response)
+        ret = parse(response, content)
+        if isawaitable(ret):
+            ret = await ret
+        return ret
 
 
 @overload
@@ -602,7 +632,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ConnectionPool = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper], T] = None, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] = None, 
     async_: Literal[False] = False, 
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T:
@@ -621,7 +651,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | AsyncConnectionPool = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] = None, 
     async_: Literal[True], 
     **request_kwargs, 
 ) -> Awaitable[ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T]:
@@ -639,7 +669,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Undefined | ConnectionPool | AsyncConnectionPool = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] | Callable[[ResponseWrapper], T] | Callable[[ResponseWrapper], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[ResponseWrapper, bytes], T] | Callable[[ResponseWrapper, bytes], Awaitable[T]] = None, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
 ) -> ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T | Awaitable[ResponseWrapper | bytes | str | dict | list | int | float | bool | None | T]:

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-decotools"
-version = "0.0.3"
+version = "0.0.4"
 description = "Tools for making decorators"
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

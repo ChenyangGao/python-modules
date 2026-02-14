@@ -253,16 +253,17 @@ def encode_multipart_data(
             match value:
                 case [value]:
                     pass
-                case [_, value]:
+                case [filename, value]:
                     pass
-                case [_, value, file_type]:
+                case [filename, value, file_type]:
                     if file_type:
                         headers[b"content-type"] = ensure_bytes_(file_type)
-                case [_, value, file_type, file_headers, *rest]:
+                case [filename, value, file_type, file_headers, *rest]:
                     for k, v in iter_items(file_headers):
                         headers[ensure_bytes_(k).lower()] = ensure_bytes_(v)
                     if file_type:
                         headers[b"content-type"] = ensure_bytes_(file_type)
+            filename = ensure_bytes_(filename)
         if isinstance(value, (PathLike, SupportsRead)):
             is_file = True
             if isinstance(value, PathLike):
@@ -347,16 +348,17 @@ def encode_multipart_data_async(
             match value:
                 case [value]:
                     pass
-                case [_, value]:
+                case [filename, value]:
                     pass
-                case [_, value, file_type]:
+                case [filename, value, file_type]:
                     if file_type:
                         headers[b"content-type"] = ensure_bytes_(file_type)
-                case [_, value, file_type, file_headers, *rest]:
+                case [filename, value, file_type, file_headers, *rest]:
                     for k, v in iter_items(file_headers):
                         headers[ensure_bytes_(k).lower()] = ensure_bytes_(v)
                     if file_type:
                         headers[b"content-type"] = ensure_bytes_(file_type)
+            filename = ensure_bytes_(filename)
         if isinstance(value, (PathLike, SupportsRead)):
             is_file = True
             if isinstance(value, PathLike):

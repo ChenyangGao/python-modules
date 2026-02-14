@@ -283,3 +283,5 @@ def render(block: str | Block, ns: Mapping, /, globals: None | dict = {}) -> str
 # NOTE: eval("f%r" % x) == eval("f%r" % ("{f'%s'}" % x))
 
 # TODO: 为输入条目添加包装类，至少实现 1. 链式操作 2. 管道 3. 扩展语法 4. 注入上下文和内省
+# TODO: 构造一个 str 的子类，对 __format__ 方法进行扩展，使支持更丰富的语法，例如 sed 格式的正则表达式
+

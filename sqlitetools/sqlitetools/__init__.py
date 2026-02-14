@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 5)
+__version__ = (0, 0, 7)
 __all__ = [
     "FetchType", "AutoCloseConnection", "AutoCloseCursor", 
     "to_uri", "bind_row_factory", "enclose", "connect", 
@@ -202,35 +202,33 @@ def transact(
 
     :return: 上下文管理器，返回一个游标
     """
-    if isinstance(con, (bytes, str, PathLike)):
-        with connect(con, isolation_level=isolation_level) as con:
-            yield from transact.__wrapped__(con, isolation_level) # type: ignore
+    if not isinstance(con, (Cursor, Connection)):
+        con = connect(con, isolation_level=isolation_level)
+    if isinstance(con, Connection):
+        cur: Cursor = con.cursor(factory=AutoCloseCursor)
     else:
-        if isinstance(con, Connection):
-            cur: Cursor = con.cursor(factory=AutoCloseCursor)
-        else:
-            cur = con
-            con = cur.connection
-        if con.autocommit == 1:
-            yield cur
-        else:
-            if con.isolation_level is None:
-                if isolation_level is None:
-                    yield cur
-                    return
-                cur.executescript(f"BEGIN {isolation_level};")
-            elif isolation_level:
-                cur.executescript(f"BEGIN {isolation_level};")
-            try:
+        cur = con
+        con = cur.connection
+    if con.autocommit == 1:
+        yield cur
+    else:
+        if con.isolation_level is None:
+            if isolation_level is None:
                 yield cur
-                con.commit()
-            except:
-                con.rollback()
-                raise
+                return
+            cur.executescript(f"BEGIN {isolation_level};")
+        elif isolation_level:
+            cur.executescript(f"BEGIN {isolation_level};")
+        try:
+            yield cur
+            con.commit()
+        except:
+            con.rollback()
+            raise
 
 
 def execute(
-    con: Connection | Cursor, 
+    con, 
     /, 
     sql: str, 
     params: Any = None, 
@@ -247,6 +245,8 @@ def execute(
 
     :return: 游标
     """
+    if not isinstance(con, (Cursor, Connection)):
+        con = connect(con)
     if isinstance(con, Connection):
         cur: Cursor = con.cursor(factory=AutoCloseCursor)
     else:
@@ -271,7 +271,7 @@ def execute(
 
 
 def query(
-    con: Connection | Cursor, 
+    con, 
     /, 
     sql: str, 
     params: Any = None, 
@@ -297,7 +297,7 @@ def query(
 
 
 def find(
-    con: Connection | Cursor, 
+    con, 
     /, 
     sql: str, 
     params: Any = None, 
@@ -331,7 +331,7 @@ def find(
 
 
 def upsert_items(
-    con: Connection | Cursor, 
+    con, 
     items: dict | Sequence[dict], 
     /, 
     extras: None | dict = None, 

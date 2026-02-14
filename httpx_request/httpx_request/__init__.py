@@ -2,14 +2,13 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 8)
+__version__ = (0, 1, 9)
 __all__ = ["request", "request_sync", "request_async"]
 
 from collections import UserString
 from collections.abc import (
     Awaitable, Buffer, Callable, Iterable, Mapping, 
 )
-from contextlib import aclosing, closing
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
 from inspect import isawaitable, signature
@@ -17,12 +16,11 @@ from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 
-from argtools import argcount
 from cookietools import update_cookies
 from dicttools import get_all_items
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import parse_response
+from http_response import parse_response, get_length
 from httpx import (
     Cookies, Client, AsyncClient, HTTPTransport, AsyncHTTPTransport, 
     Limits, Request, Response, Timeout, 
@@ -75,6 +73,28 @@ _DEFAULT_ASYNC_CLIENT = AsyncClient(
 )
 
 
+def finalize(resp: Response, /, maxsize: int = 0):
+    try:
+        if (resp.request.method == "HEAD" or 
+            maxsize <= 0 or
+            (length := get_length(resp)) is not None and length <= maxsize
+        ):
+            resp.read()
+    finally:
+        resp.close()
+
+
+async def async_finalize(resp: Response, /, maxsize: int = 0):
+    try:
+        if (resp.request.method == "HEAD" or 
+            maxsize <= 0 or
+            (length := get_length(resp)) is not None and length <= maxsize
+        ):
+            await resp.aread()
+    finally:
+        await resp.aclose()
+
+
 @overload
 def request_sync(
     url: string | SupportsGeturl | URL | Request, 
@@ -143,7 +163,7 @@ def request_sync[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
-    parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
+    parse: Callable[[Response, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -160,7 +180,7 @@ def request_sync[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | Client = _DEFAULT_CLIENT, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] = None, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs["follow_redirects"] = follow_redirects
@@ -199,23 +219,21 @@ def request_sync[T](
     if cookies is not None and response.cookies:
         update_cookies(cookies, response.cookies.jar) # type: ignore
     if response.status_code >= 400 and raise_for_status:
+        finalize(response)
         response.raise_for_status()
     if parse is None:
+        if response.request.method == "HEAD":
+            finalize(response)
         return response
     elif parse is ...:
-        response.close()
+        finalize(response, 10485760)
         return response
-    with closing(response):
-        if isinstance(parse, bool):
-            content = response.read()
-            if parse:
-                return parse_response(response, content)
-            return content
-        ac = argcount(parse)
-        if ac == 1:
-            return cast(Callable[[Response], T], parse)(response)
-        else:
-            return cast(Callable[[Response, bytes], T], parse)(response, response.read())
+    finalize(response)
+    if isinstance(parse, bool):
+        if not parse:
+            return response.content
+        parse = cast(Callable, parse_response)
+    return parse(response, response.content)
 
 
 @overload
@@ -286,7 +304,7 @@ async def request_async[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]], 
+    parse: Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -303,7 +321,7 @@ async def request_async[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | AsyncClient = _DEFAULT_ASYNC_CLIENT, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] = None, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs["follow_redirects"] = follow_redirects
@@ -343,27 +361,24 @@ async def request_async[T](
     if cookies is not None and response.cookies:
         update_cookies(cookies, response.cookies.jar) # type: ignore
     if response.status_code >= 400 and raise_for_status:
+        await async_finalize(response)
         response.raise_for_status()
     if parse is None:
+        if response.request.method == "HEAD":
+            await async_finalize(response)
         return response
     elif parse is ...:
-        await response.aclose()
+        await async_finalize(response, 10485760)
         return response
-    async with aclosing(response):
-        if isinstance(parse, bool):
-            content = await response.aread()
-            if parse:
-                return parse_response(response, content)
-            return content
-        ac = argcount(parse)
-        if ac == 1:
-            ret = cast(Callable[[Response], T] | Callable[[Response], Awaitable[T]], parse)(response)
-        else:
-            ret = cast(Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]], parse)(
-                response, await response.aread())
-        if isawaitable(ret):
-            ret = await ret
-        return ret
+    await async_finalize(response)
+    if isinstance(parse, bool):
+        if not parse:
+            return response.content
+        parse = cast(Callable, parse_response)
+    ret = parse(response, response.content)
+    if isawaitable(ret):
+        ret = await ret
+    return ret
 
 
 @overload
@@ -380,7 +395,7 @@ def request[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | Undefined | Client = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] = None, 
     async_: Literal[False] = False, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T:
@@ -399,7 +414,7 @@ def request[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | Undefined | AsyncClient = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] = None, 
     async_: Literal[True], 
     **request_kwargs, 
 ) -> Awaitable[Response | bytes | str | dict | list | int | float | bool | None | T]:
@@ -417,7 +432,7 @@ def request[T](
     cookies: None | Cookies | CookieJar | BaseCookie = None, 
     session: None | Undefined | Client | AsyncClient = undefined, 
     *, 
-    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] | Callable[[Response], T] | Callable[[Response], Awaitable[T]] = None, 
+    parse: None | EllipsisType | bool | Callable[[Response, bytes], T] | Callable[[Response, bytes], Awaitable[T]] = None, 
     async_: Literal[False, True] = False, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T | Awaitable[Response | bytes | str | dict | list | int | float | bool | None | T]:

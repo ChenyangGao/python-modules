@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 1)
+__version__ = (0, 1, 2)
 __all__ = [
     "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
     "ConnectionPool", "request", 
@@ -29,12 +29,11 @@ from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit, urlunsplit, ParseResult, SplitResult
 from warnings import warn
 
-from argtools import argcount
 from cookietools import cookies_to_str, extract_cookies
 from dicttools import get_all_items
 from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import decompress_response, parse_response
+from http_response import decompress_response, parse_response, get_length
 from socket_keepalive import socket_keepalive
 from urllib3 import HTTPResponse as Urllib3HTTPResponse, HTTPHeaderDict
 from undefined import undefined, Undefined
@@ -262,7 +261,7 @@ class ConnectionPool:
             except IndexError:
                 break
             con.timeout = timeout
-            if con.state != "Idle" or getattr(con.sock, "_closed"):
+            if con.state != "Idle" or getattr(con.sock, "_closed", None):
                 con.close()
             return con
         if url.scheme == "https":
@@ -364,7 +363,7 @@ def request[T](
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined,  
     *, 
-    parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
+    parse: Callable[[HTTPResponse, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -382,7 +381,7 @@ def request[T](
     proxies: None | str | dict[str, str] = None, 
     pool: None | Undefined | ConnectionPool = undefined, 
     *, 
-    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
+    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] = None, 
     **request_kwargs, 
 ) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
     if pool is undefined:
@@ -453,13 +452,20 @@ def request[T](
             connection.set_tunnel(*http_proxy)
         elif pool:
             connection.set_tunnel()
-        connection.request(
-            method, 
-            urlunsplit(urlp._replace(scheme="", netloc="")), 
-            body, 
-            headers_, 
-        )
-        response = connection.getresponse()
+        # TODO: 这样处理真的好吗，还是需要验证一下，特别是对于需要上传的情况，如果数据上传后，连接断掉，要不要重新上传，如果是迭代器，数据直接就丢失了
+        try:
+            connection.request(
+                method, 
+                urlunsplit(urlp._replace(scheme="", netloc="")), 
+                body, 
+                headers_, 
+            )
+        except BrokenPipeError:
+            continue
+        try:
+            response = connection.getresponse()
+        except ConnectionError:
+            continue
         if pool and headers_.get("connection") == "keep-alive":
             setattr(response, "pool", pool)
         setattr(response, "connection", connection)
@@ -485,8 +491,10 @@ def request[T](
                     if status_code == 303:
                         method = "GET"
                     body = None
+                response.read()
                 continue
         elif status_code >= 400 and raise_for_status:
+            setattr(response, "content", response.read())
             raise HTTPError(
                 url, 
                 status_code, 
@@ -495,21 +503,23 @@ def request[T](
                 response, 
             )
         if parse is None:
+            if method == "HEAD":
+                response.read()
             return response
         elif parse is ...:
-            response.close()
+            try:
+                if (method == "HEAD" or 
+                    (length := get_length(response)) is not None and length <= 10485760
+                ):
+                    response.read()
+            finally:
+                response.close()
             return response
+        content = decompress_response(response.read(), response)
         if isinstance(parse, bool):
-            content = decompress_response(response.read(), response)
-            if parse:
-                return parse_response(response, content)
-            return content
-        ac = argcount(parse)
-        if ac == 1:
-            return cast(Callable[[HTTPResponse], T], parse)(response)
-        else:
-            content = decompress_response(response.read(), response)
-            return cast(Callable[[HTTPResponse, bytes], T], parse)(
-                response, content)
+            if not parse:
+                return content
+            parse = cast(Callable, parse_response)
+        return parse(response, content)
 
 # TODO: 实现异步请求，非阻塞模式(sock.setblocking(False))，对于响应体的数据加载，使用 select 模块进行通知

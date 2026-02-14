@@ -2,7 +2,7 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 4)
+__version__ = (0, 1, 5)
 __all__ = ["request"]
 
 from collections import UserString
@@ -17,12 +17,11 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import Request
 from warnings import warn
 
-from argtools import argcount
 from cookietools import extract_cookies, cookies_dict_to_str, cookies_str_to_dict
 from dicttools import dict_merge
 from filewrap import SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import parse_response
+from http_response import parse_response, get_length
 from urllib3.poolmanager import PoolManager
 from urllib3.response import HTTPResponse
 from urllib3.util.url import _normalize_host as normalize_host
@@ -126,7 +125,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
-    parse: Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T], 
+    parse: Callable[[HTTPResponse, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -144,7 +143,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | PoolManager = _DEFAULT_POOL, 
     *, 
-    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] | Callable[[HTTPResponse], T] = None, 
+    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] = None, 
     **request_kwargs, 
 ) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs["preload_content"] = not stream
@@ -222,19 +221,13 @@ def request[T](
         ))
         setattr(response, "session", session)
         setattr(response, "cookies", response_cookies)
+        setattr(response, "method", method)
+        setattr(response, "url", url)
         if cookies is not None:
             extract_cookies(cookies, url, response) # type: ignore
         extract_cookies(response_cookies, url, response)
         status_code = response.status
-        if status_code >= 400 and raise_for_status:
-            raise HTTPError(
-                url, 
-                status_code, 
-                response.reason or "", 
-                response.headers, # type: ignore
-                cast(IO[bytes], response), 
-            )
-        elif redirect_location := follow_redirects and response.get_redirect_location():
+        if redirect_location := follow_redirects and response.get_redirect_location():
             dict_merge(cookies_dict, ((cookie.name, cookie.value) for cookie in response_cookies))
             if cookies_dict:
                 headers_["cookie"] = cookies_dict_to_str(cookies_dict)
@@ -253,22 +246,32 @@ def request[T](
                 body = None
             response.drain_conn()
             continue
+        elif raise_for_status and status_code >= 400:
+            response.drain_conn()
+            raise HTTPError(
+                url, 
+                status_code, 
+                response.reason or "", 
+                response.headers, # type: ignore
+                cast(IO[bytes], response), 
+            )
         if parse is None:
+            if method == "HEAD":
+                response.drain_conn()
             return response
         elif parse is ...:
-            response.close()
+            try:
+                if (method == "HEAD" or 
+                    (length := get_length(response)) is not None and length <= 10485760
+                ):
+                    response.read()
+            finally:
+                response.close()
             return response
-        with response:
-            if isinstance(parse, bool):
-                # NOTE: OR content = response.data
-                content = response.read()
-                if parse:
-                    return parse_response(response, content)
+        content = response.data
+        if isinstance(parse, bool):
+            if not parse:
                 return content
-            ac = argcount(parse)
-            if ac == 1:
-                return cast(Callable[[HTTPResponse], T], parse)(response)
-            else:
-                return cast(Callable[[HTTPResponse, bytes], T], parse)(
-                    response, response.read())
+            parse = cast(Callable, parse_response)
+        return parse(response, content)
 

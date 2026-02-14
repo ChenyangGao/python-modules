@@ -2,12 +2,11 @@
 # coding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = ["request"]
 
 from collections import UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
-from contextlib import closing
 from copy import copy
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
@@ -16,12 +15,11 @@ from os import PathLike
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 
-from argtools import argcount
 from cookietools import extract_cookies, update_cookies
 from dicttools import get_all_items
 from filewrap import bio_chunk_iter, SupportsRead
 from http_request import normalize_request_args, SupportsGeturl
-from http_response import parse_response
+from http_response import parse_response, get_length
 from requests import adapters
 from requests.cookies import RequestsCookieJar
 from requests.models import Request, Response
@@ -116,7 +114,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
-    parse: Callable[[Response, bytes], T] | Callable[[Response], T], 
+    parse: Callable[[Response, bytes], T], 
     **request_kwargs, 
 ) -> T:
     ...
@@ -134,7 +132,7 @@ def request[T](
     cookies: None | CookieJar | BaseCookie = None, 
     session: None | Session = _DEFAULT_SESSION, 
     *, 
-    parse: None | EllipsisType| bool | Callable[[Response, bytes], T] | Callable[[Response], T] = None, 
+    parse: None | EllipsisType| bool | Callable[[Response, bytes], T] = None, 
     **request_kwargs, 
 ) -> Response | bytes | str | dict | list | int | float | bool | None | T:
     request_kwargs["allow_redirects"] = follow_redirects
@@ -186,24 +184,26 @@ def request[T](
             for key, val in response.headers.items():
                 response_headers.set_raw(key, val)
             setattr(response, "info", lambda: response_headers)
-            extract_cookies(cookies, response.url, response)
+            extract_cookies(cookies, response.url, response) # type: ignore
     if raise_for_status:
         response.raise_for_status()
     if parse is None:
+        if method == "HEAD":
+            response.content
         return response
     elif parse is ...:
-        response.close()
+        try:
+            if (method == "HEAD" or 
+                (length := get_length(response)) is not None and length <= 10485760
+            ):
+                response.content
+        finally:
+            response.close()
         return response
-    with closing(response):
-        if isinstance(parse, bool):
-            content = response.content
-            if parse:
-                return parse_response(response, content)
+    content = response.content
+    if isinstance(parse, bool):
+        if not parse:
             return content
-        ac = argcount(parse)
-        if ac == 1:
-            return cast(Callable[[Response], T], parse)(response)
-        else:
-            return cast(Callable[[Response, bytes], T], parse)(
-                response, response.content)
+        parse = cast(Callable, parse_response)
+    return parse(response, content)
 

@@ -5,8 +5,8 @@
 """
 
 __author__  = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 3)
-__all__ = ["decorated", "optional", "currying", "partialize"]
+__version__ = (0, 0, 4)
+__all__ = ["decorated", "optional", "method_optional", "currying", "partialize"]
 
 from collections.abc import Callable
 from functools import update_wrapper as _update_wrapper
@@ -21,43 +21,80 @@ def bind[R](func: Callable[..., R], /, *args, **kwds) -> Callable[..., R]:
 
 
 def update_wrapper(f, g, /):
-    if f is g:
+    if f is g or not callable(f):
         return f
     return _update_wrapper(f, g)
 
 
 def decorated[**Args, R, T](
-    f: Callable[Concatenate[Callable[Args, R], Args], T], 
+    f: Callable[Concatenate[Callable[Args, R], Args], T] | Callable[Concatenate[Any, Callable[Args, R], Args], T], 
     /, 
 ) -> Callable[[Callable[Args, R]], Callable[Args, T]]:
     """Transform the 2-layers decorator into 1-layer.
 
-    .. code:: python
+    1. Decorator as a function
 
-        @decorated
-        def decorator(func, /, *args, **kwds):
-            ...
-            return func(*args, **kwds)
-
-    Roughly equivalent to:
-
-    .. code:: python
-
-        import functools
-
-        def decorator(func, /):
-            def wrapper(*args, **kwds):
+        .. code:: python
+            @decorated
+            def decorator(func, /, *args, **kwds):
                 ...
                 return func(*args, **kwds)
-            return functools.update_wrapper(wrapper, func)
+
+            # Roughly equivalent to:
+
+            def decorator(func):
+                def wrapper(*args, **kwds)
+                    ...
+                    return func(*args, **kwds)
+                return functools.update_wrapper(wrapper, func)
+
+    2. Decorator as an instance method 
+
+        .. code:: python
+
+            class Foo:
+                @decorated
+                def decorator(self, func, /, *args, **kwds):
+                    ...
+                    return func(*args, **kwds)
+
+            # Roughly equivalent to:
+
+            class Foo:
+                def decorator(self, func):
+                    def wrapper(*args, **kwds)
+                        ...
+                        return func(*args, **kwds)
+                    return functools.update_wrapper(wrapper, func)
+
+    3. Decorator as a class method 
+
+        .. code:: python
+
+            class Foo:
+                @decorated
+                @classmethod
+                def decorator(cls, func, /, *args, **kwds):
+                    ...
+                    return func(*args, **kwds)
+
+            # Roughly equivalent to:
+
+            class Foo:
+                @classmethod
+                def decorator(cls, func):
+                    def wrapper(*args, **kwds)
+                        ...
+                        return func(*args, **kwds)
+                    return functools.update_wrapper(wrapper, func)
     """
-    return update_wrapper(lambda g, /: update_wrapper(bind(f, g), g), f)
+    return update_wrapper(lambda *a: update_wrapper(bind(f, *a), a[-1]), f)
 
 
-def optional[**Args, D1, D2](
-    f: Callable[Concatenate[D1, Args], D2], 
+def optional[**Args, R](
+    f: Callable[Args, R], 
     /, 
-) -> Callable[[D1], D2] | Callable[Args, Callable[[D1], D2]]:
+) -> Callable:
     """Transforming a decorator factory that accepts arguments (with defaults) 
     into a decorator that can be used with optional arguments.
 
@@ -72,7 +109,7 @@ def optional[**Args, D1, D2](
     ... 
     >>> @foo 
     ... def baba(): 
-    ...     print("baba") 
+    ...     print("baba")
     ... 
     >>> baba()
     bar
@@ -87,10 +124,19 @@ def optional[**Args, D1, D2](
     baba2
     baz3
     """
-    def wrapped(func=None, /, *args, **kwds):
-        if func is None:
-            return lambda func, /: wrapped(func, *args, **kwds)
-        return update_wrapper(f(func, *args, **kwds), func)
+    nargs = 0
+    for param in signature(f).parameters.values():
+        if param.kind is param.POSITIONAL_ONLY:
+            nargs += 1
+        elif param.kind is param.POSITIONAL_OR_KEYWORD and param.default is param.empty:
+            nargs += 1
+        if nargs >= 2:
+            break
+    def wrapped(*args: Args.args, **kwds: Args.kwargs):
+        len_args = len(args)
+        if len_args >= nargs:
+            return update_wrapper(f(*args, **kwds), args[-1])
+        return bind(f, *args, **kwds)
     return update_wrapper(wrapped, f)
 
 

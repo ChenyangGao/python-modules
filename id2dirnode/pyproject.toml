@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "httpx_request"
-version = "0.1.9"
-description = "httpx request extension."
+name = "id2dirnode"
+version = "0.0.2"
+description = "Implementation of id_to_dirnode."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
 readme = "readme.md"
-homepage = "https://github.com/ChenyangGao/python-modules/tree/main/httpx_request"
-repository = "https://github.com/ChenyangGao/python-modules/tree/main/httpx_request"
-keywords = ["httpx", "request"]
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/id2dirnode"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/id2dirnode"
+keywords = ["id_to_dirnode"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
@@ -26,20 +26,11 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.12"
-httpx = "*"
-http_response = ">=0.0.9"
-python-asynctools = ">=0.1.3.4"
-python-cookietools = ">=0.1.4"
-python-dicttools = ">=0.0.5"
-python-filewrap = ">=0.2.9"
-python-http_request = ">=0.1.6"
-python-undefined = ">=0.0.4"
-yarl = "*"
+python = "^3.10"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.packages]]
-include = "httpx_request"
+include = "id2dirnode"

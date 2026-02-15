@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = [
     "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
     "ConnectionPool", "request", 
@@ -15,14 +15,14 @@ from collections import defaultdict, deque, UserString
 from collections.abc import Buffer, Callable, Iterable, Mapping
 from http.client import (
     HTTPConnection as BaseHTTPConnection, HTTPSConnection as BaseHTTPSConnection, 
-    HTTPResponse as BaseHTTPResponse, ImproperConnectionState, 
+    HTTPResponse as BaseHTTPResponse, 
 )
 from http.cookiejar import CookieJar
 from http.cookies import BaseCookie
 from inspect import signature
 from os import PathLike
 from select import select
-from socket import socket
+from socket import MSG_PEEK, MSG_DONTWAIT
 from types import EllipsisType
 from typing import cast, overload, Any, Final, Literal
 from urllib.error import HTTPError
@@ -64,9 +64,19 @@ def is_ipv6(host: str, /) -> bool:
         return False
 
 
-def sock_buf_readable(sock: socket, /) -> bool:
-    rlist, *_ = select([sock], (), (), 0)
-    return bool(rlist)
+def ensure_available_connection(conn: BaseHTTPConnection, /):
+    if sock := conn.sock:
+        if getattr(sock, "_closed", True):
+            conn.close()
+        else:
+            try:
+                if select([sock], [], [], 0)[0]:
+                    sock.recv(1, MSG_PEEK | MSG_DONTWAIT)
+                    conn.close()
+            except (ValueError, ConnectionResetError):
+                conn.close()
+            except BlockingIOError:
+                pass
 
 
 try:
@@ -108,7 +118,7 @@ class HTTPResponse(BaseHTTPResponse):
         if pool and connection and not (
             200 <= self.status < 300 and 
             (length := self.length) and 
-            length - self._pos - len(fp.peek()) - sock_bufsize(connection.sock) > 1024 * 1024 * 10
+            length - self._pos - len(fp.peek()) - sock_bufsize(connection.sock) > 1024 * 1024 * 10 # 10 MB
         ):
             try:
                 self.read()
@@ -184,19 +194,6 @@ class HTTPConnectionMixin:
     @property
     def state(self: Any, /) -> str:
         return self._HTTPConnection__state
-
-    def getresponse(self: Any, /) -> HTTPResponse:
-        return cast(HTTPResponse, super().getresponse()) # type: ignore
-
-    def putrequest(self: Any, /, *args, **kwds):
-        excs: list[Exception] = []
-        for _ in range(5):
-            try:
-                return super().putrequest(*args, **kwds) # type: ignore
-            except (ConnectionResetError, BrokenPipeError, ImproperConnectionState) as e:
-                excs.append(e)
-                self.close()
-        raise ExceptionGroup("too many retries", excs)
 
     def set_tunnel(self: Any, /, host=None, port=None, headers=None):
         has_sock = self.sock is not None
@@ -452,20 +449,14 @@ def request[T](
             connection.set_tunnel(*http_proxy)
         elif pool:
             connection.set_tunnel()
-        # TODO: 这样处理真的好吗，还是需要验证一下，特别是对于需要上传的情况，如果数据上传后，连接断掉，要不要重新上传，如果是迭代器，数据直接就丢失了
-        try:
-            connection.request(
-                method, 
-                urlunsplit(urlp._replace(scheme="", netloc="")), 
-                body, 
-                headers_, 
-            )
-        except BrokenPipeError:
-            continue
-        try:
-            response = connection.getresponse()
-        except ConnectionError:
-            continue
+        ensure_available_connection(connection)
+        connection.request(
+            method, 
+            urlunsplit(urlp._replace(scheme="", netloc="")), 
+            body, 
+            headers_, 
+        )
+        response = cast(HTTPResponse, connection.getresponse())
         if pool and headers_.get("connection") == "keep-alive":
             setattr(response, "pool", pool)
         setattr(response, "connection", connection)

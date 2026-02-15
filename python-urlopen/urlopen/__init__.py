@@ -26,7 +26,9 @@ from urllib.request import (
 from cookietools import cookies_to_str, extract_cookies, update_cookies
 from dicttools import dict_map, iter_items
 from filewrap import bio_skip_iter, SupportsRead, SupportsWrite
-from http_client_request import ConnectionPool, HTTPResponse, CONNECTION_POOL
+from http_client_request import (
+    ConnectionPool, HTTPResponse, CONNECTION_POOL, ensure_available_connection, 
+)
 from http_request import normalize_request_args, SupportsGeturl
 from http_response import (
     decompress_response, get_filename, get_length, is_chunked, is_range_request, 
@@ -100,6 +102,7 @@ class KeepAliveBaseHTTPHandler(AbstractHTTPHandler):
             con.set_tunnel(req._tunnel_host, headers=tunnel_headers)
         else:
             con.set_tunnel()
+        ensure_available_connection(con)
         try:
             try:
                 con.request(req.get_method(), req.selector, req.data, headers,
@@ -526,7 +529,6 @@ def download(
             elif resume:
                 for _ in bio_skip_iter(response, filesize, callback=reporthook):
                     pass
-
         fsrc_read = response.read 
         fdst_write = fdst.write
         while (chunk := fsrc_read(chunksize)):
@@ -539,6 +541,3 @@ def download(
             reporthook_close()
     return file
 
-# BUG: 经常会报错 URLError: <urlopen error [Errno 32] Broken pipe>
-# BUG: URLError: <urlopen error [Errno 8] nodename nor servname provided, or not known>
-# BUG: RemoteDisconnected: Remote end closed connection without response

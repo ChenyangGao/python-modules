@@ -1,0 +1,45 @@
+[tool.poetry]
+name = "aiosonic_request"
+version = "0.0.1"
+description = "aiosonic request extension."
+authors = ["ChenyangGao <wosiwujm@gmail.com>"]
+license = "MIT"
+readme = "readme.md"
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/aiosonic_request"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/aiosonic_request"
+keywords = ["aiosonic", "request"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+include = [
+    "LICENSE",
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+aiosonic = "*"
+http_response = ">=0.0.9"
+python-argtools = ">=0.0.2"
+python-asynctools = ">=0.1.3.4"
+python-cookietools = ">=0.1.3"
+python-dicttools = ">=0.0.4"
+python-filewrap = ">=0.2.8"
+python-http_request = ">=0.1.4"
+yarl = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.packages]]
+include = "aiosonic_request"

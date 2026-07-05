@@ -1,0 +1,516 @@
+#!/usr/bin/env python3
+# coding: utf-8
+
+from __future__ import annotations
+
+__author__ = "ChenyangGao <https://chenyanggao.github.io>"
+__version__ = (0, 1, 3)
+__all__ = [
+    "CONNECTION_POOL", "HTTPConnection", "HTTPSConnection", "HTTPResponse", 
+    "ConnectionPool", "request", 
+]
+
+from array import array
+from collections import defaultdict, deque, UserString
+from collections.abc import Buffer, Callable, Iterable, Mapping
+from http.client import (
+    HTTPConnection as BaseHTTPConnection, HTTPSConnection as BaseHTTPSConnection, 
+    HTTPResponse as BaseHTTPResponse, 
+)
+from http.cookiejar import CookieJar
+from http.cookies import BaseCookie
+from inspect import signature
+from os import PathLike
+from select import select
+from socket import MSG_PEEK, MSG_DONTWAIT
+from types import EllipsisType
+from typing import cast, overload, Any, Final, Literal
+from urllib.error import HTTPError
+from urllib.parse import urljoin, urlsplit, urlunsplit, ParseResult, SplitResult
+from warnings import warn
+
+from cookietools import cookies_to_str, extract_cookies
+from dicttools import get_all_items
+from filewrap import SupportsRead
+from http_request import normalize_request_args, SupportsGeturl
+from http_response import decompress_response, parse_response, get_length
+from socket_keepalive import socket_keepalive
+from urllib3 import HTTPResponse as Urllib3HTTPResponse, HTTPHeaderDict
+from undefined import undefined, Undefined
+from yarl import URL
+
+
+type string = Buffer | str | UserString
+
+HTTP_CONNECTION_KWARGS: Final = signature(BaseHTTPConnection).parameters.keys()
+HTTPS_CONNECTION_KWARGS: Final = signature(BaseHTTPSConnection).parameters.keys()
+
+
+def get_host_pair(url: None | str, /) -> None | tuple[str, None | int]:
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    urlp = urlsplit(url)
+    return urlp.hostname or "localhost", urlp.port
+
+
+def is_ipv6(host: str, /) -> bool:
+    from ipaddress import _BaseV6, AddressValueError
+    try:
+        _BaseV6._ip_int_from_string(host) # type: ignore
+        return True
+    except AddressValueError:
+        return False
+
+
+def ensure_available_connection(conn: BaseHTTPConnection, /):
+    if sock := conn.sock:
+        if getattr(sock, "_closed", True):
+            conn.close()
+        else:
+            try:
+                if select([sock], [], [], 0)[0]:
+                    sock.recv(1, MSG_PEEK | MSG_DONTWAIT)
+                    conn.close()
+            except (ValueError, ConnectionResetError):
+                conn.close()
+            except BlockingIOError:
+                pass
+
+
+try:
+    from fcntl import ioctl
+    from termios import FIONREAD
+
+    def sock_bufsize(sock, /) -> int:
+        if sock is None:
+            return 0
+        sock_size = array("i", [0])
+        ioctl(sock, FIONREAD, sock_size)
+        return sock_size[0]
+except ImportError:
+    from ctypes import byref, c_ulong, WinDLL # type: ignore
+    ws2_32 = WinDLL("ws2_32")
+    def sock_bufsize(sock, /) -> int:
+        if sock is None:
+            return 0
+        FIONREAD = 0x4004667f
+        b = c_ulong(0)
+        ws2_32.ioctlsocket(sock.fileno(), FIONREAD, byref(b))
+        return b.value
+
+
+class HTTPResponse(BaseHTTPResponse):
+    _pos: int = 0
+    method: str
+    pool: None | ConnectionPool = None
+    connection: None | HTTPConnection | HTTPSConnection = None
+
+    def __del__(self, /):
+        self.close()
+
+    def _close_conn(self, /):
+        fp = self.fp
+        setattr(self, "fp", None)
+        pool = getattr(self, "pool", None)
+        connection = getattr(self, "connection", None)
+        if pool and connection and not (
+            200 <= self.status < 300 and 
+            (length := self.length) and 
+            length - self._pos - len(fp.peek()) - sock_bufsize(connection.sock) > 1024 * 1024 * 10 # 10 MB
+        ):
+            try:
+                self.read()
+            except OSError:
+                pass
+            pool.return_connection(connection)
+        else:
+            fp.close()
+
+    def get_urllib3_response(self, /) -> Urllib3HTTPResponse:
+        return Urllib3HTTPResponse(
+            body=self, 
+            headers=HTTPHeaderDict(self.headers.items()), 
+            status=self.status, 
+            version=self.version, 
+            version_string="HTTP/%s" % (self.version or "?"), 
+            reason=self.reason, 
+            preload_content=False, 
+            decode_content=True, 
+            original_response=self, 
+            msg=self.headers, 
+            request_method=getattr(self, "method", None), 
+            request_url=self.url, 
+        )
+
+    def read(self, /, amt=None) -> bytes:
+        data = super().read(amt)
+        self._pos += len(data)
+        return data
+
+    def read1(self, /, n=-1) -> bytes:
+        data = super().read1(n)
+        self._pos += len(data)
+        return data
+
+    def readinto(self, /, b) -> int:
+        count = super().readinto(b)
+        self._pos += count
+        return count
+
+    def readinto1(self, buffer, /) -> int:
+        count = super().readinto1(buffer)
+        self._pos += count
+        return count
+
+    def readline(self, limit=-1) -> bytes:
+        data = super().readline(limit)
+        self._pos += len(data)
+        return data
+
+    def readlines(self, hint=-1, /) -> list[bytes]:
+        ls = super().readlines(hint)
+        self._pos += sum(map(len, ls))
+        return ls
+
+    def tell(self, /) -> int:
+        return self._pos
+
+
+class HTTPConnectionMixin:
+
+    def __del__(self: Any, /):
+        self.close()
+
+    def connect(self: Any, /):
+        super().connect() # type: ignore
+        socket_keepalive(self.sock)
+
+    @property
+    def response(self: Any, /) -> None | HTTPResponse:
+        return self._HTTPConnection__response
+
+    @property
+    def state(self: Any, /) -> str:
+        return self._HTTPConnection__state
+
+    def set_tunnel(self: Any, /, host=None, port=None, headers=None):
+        has_sock = self.sock is not None
+        if not host:
+            if self._tunnel_host:
+                if has_sock:
+                    self.close()
+                self._tunnel_host = self._tunnel_port = None
+                self._tunnel_headers.clear()
+        elif (self._tunnel_host, self._tunnel_port) != self._get_hostport(host, port):
+            if has_sock:
+                self.close()
+            super().set_tunnel(host, port, headers) # type: ignore
+
+
+class HTTPConnection(HTTPConnectionMixin, BaseHTTPConnection):
+    response_class = HTTPResponse
+
+
+class HTTPSConnection(HTTPConnectionMixin, BaseHTTPSConnection):
+    response_class = HTTPResponse
+
+
+class ConnectionPool:
+
+    def __init__(
+        self, 
+        /, 
+        pool: None | defaultdict[str, deque[HTTPConnection] | deque[HTTPSConnection]] = None, 
+    ):
+        if pool is None:
+            pool = defaultdict(deque)
+        self.pool = pool
+
+    def __del__(self, /):
+        for dq in self.pool.values():
+            for con in dq:
+                con.close()
+
+    def __repr__(self, /) -> str:
+        cls = type(self)
+        return f"{cls.__module__}.{cls.__qualname__}({self.pool!r})"
+
+    def get_connection(
+        self, 
+        /, 
+        url: str | ParseResult | SplitResult, 
+        timeout: None | float = None, 
+    ) -> HTTPConnection | HTTPSConnection:
+        if isinstance(url, str):
+            url = urlsplit(url)
+        assert url.scheme, "not a complete URL"
+        host = url.hostname or "localhost"
+        if is_ipv6(host):
+            host = f"[{host}]"
+        port = url.port or (443 if url.scheme == 'https' else 80)
+        origin = f"{url.scheme}://{host}:{port}"
+        dq = self.pool[origin]
+        while True:
+            try:
+                con = dq.popleft()
+            except IndexError:
+                break
+            con.timeout = timeout
+            if con.state != "Idle" or getattr(con.sock, "_closed", None):
+                con.close()
+            return con
+        if url.scheme == "https":
+            return HTTPSConnection(url.hostname or "localhost", url.port, timeout=timeout)
+        else:
+            return HTTPConnection(url.hostname or "localhost", url.port, timeout=timeout)
+
+    def return_connection(
+        self, 
+        con: HTTPConnection | HTTPSConnection, 
+        /, 
+    ) -> str:
+        if isinstance(con, HTTPSConnection):
+            scheme = "https"
+        else:
+            scheme = "http"
+        host = con.host
+        if is_ipv6(host):
+            host = f"[{host}]"
+        origin = f"{scheme}://{host}:{con.port}"
+        self.pool[origin].append(con) # type: ignore
+        return origin
+
+    _put_conn = return_connection
+
+
+CONNECTION_POOL = ConnectionPool()
+
+
+@overload
+def request(
+    url: string | SupportsGeturl | URL, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | BaseCookie = None, 
+    proxies: None | str | dict[str, str] = None, 
+    pool: None | Undefined | ConnectionPool = undefined, 
+    *, 
+    parse: None | EllipsisType = None, 
+    **request_kwargs, 
+) -> HTTPResponse:
+    ...
+@overload
+def request(
+    url: string | SupportsGeturl | URL, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | BaseCookie = None, 
+    proxies: None | str | dict[str, str] = None, 
+    pool: None | Undefined | ConnectionPool = undefined, 
+    *, 
+    parse: Literal[False], 
+    **request_kwargs, 
+) -> bytes:
+    ...
+@overload
+def request(
+    url: string | SupportsGeturl | URL, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | BaseCookie = None, 
+    proxies: None | str | dict[str, str] = None, 
+    pool: None | Undefined | ConnectionPool = undefined, 
+    *, 
+    parse: Literal[True], 
+    **request_kwargs, 
+) -> bytes | str | dict | list | int | float | bool | None:
+    ...
+@overload
+def request[T](
+    url: string | SupportsGeturl | URL, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | BaseCookie = None, 
+    proxies: None | str | dict[str, str] = None, 
+    pool: None | Undefined | ConnectionPool = undefined,  
+    *, 
+    parse: Callable[[HTTPResponse, bytes], T], 
+    **request_kwargs, 
+) -> T:
+    ...
+def request[T](
+    url: string | SupportsGeturl | URL, 
+    method: string = "GET", 
+    params: None | string | Mapping | Iterable[tuple[Any, Any]] = None, 
+    data: Any = None, 
+    json: Any = None, 
+    files: None | Mapping[string, Any] | Iterable[tuple[string, Any]] = None, 
+    headers: None | Mapping[string, string] | Iterable[tuple[string, string]] = None, 
+    follow_redirects: bool = True, 
+    raise_for_status: bool = True, 
+    cookies: None | CookieJar | BaseCookie = None, 
+    proxies: None | str | dict[str, str] = None, 
+    pool: None | Undefined | ConnectionPool = undefined, 
+    *, 
+    parse: None | EllipsisType| bool | Callable[[HTTPResponse, bytes], T] = None, 
+    **request_kwargs, 
+) -> HTTPResponse | bytes | str | dict | list | int | float | bool | None | T:
+    if pool is undefined:
+        if proxies:
+            pool = None
+        else:
+            pool = CONNECTION_POOL
+    pool = cast(None | ConnectionPool, pool)
+    if isinstance(proxies, str):
+        http_proxy = https_proxy = get_host_pair(proxies)
+    elif isinstance(proxies, dict):
+        http_proxy = get_host_pair(proxies.get("http"))
+        https_proxy = get_host_pair(proxies.get("https"))
+    else:
+        http_proxy = https_proxy = None
+    body: Any
+    if isinstance(data, PathLike):
+        data = open(data, "rb")
+    if isinstance(data, SupportsRead):
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            headers=headers, 
+            ensure_ascii=True, 
+        )
+        body = data
+    else:
+        request_args = normalize_request_args(
+            method=method, 
+            url=url, 
+            params=params, 
+            data=data, 
+            files=files, 
+            json=json, 
+            headers=headers, 
+            ensure_ascii=True, 
+        )
+        body = request_args["data"]
+    method   = request_args["method"]
+    url      = request_args["url"]
+    headers_ = request_args["headers"]
+    headers_.setdefault("connection", "keep-alive")
+    need_set_cookie = "cookie" not in headers_
+    response_cookies = CookieJar()
+    connection: HTTPConnection | HTTPSConnection
+    while True:
+        if need_set_cookie:
+            if cookies:
+                headers_["cookie"] = cookies_to_str(cookies, url)
+            elif response_cookies:
+                headers_["cookie"] = cookies_to_str(response_cookies, url)
+        urlp = urlsplit(url)
+        request_kwargs["host"] = urlp.hostname or "localhost"
+        request_kwargs["port"] = urlp.port
+        if pool:
+            connection = pool.get_connection(urlp, timeout=request_kwargs.get("timeout"))
+        elif urlp.scheme == "https":
+            connection = HTTPSConnection(**dict(get_all_items(request_kwargs, *HTTPS_CONNECTION_KWARGS)))
+        else:
+            connection = HTTPConnection(**dict(get_all_items(request_kwargs, *HTTP_CONNECTION_KWARGS)))
+        if urlp.scheme == "https":
+            if https_proxy:
+                connection.set_tunnel(*https_proxy)
+            elif pool:
+                connection.set_tunnel()
+        elif http_proxy:
+            connection.set_tunnel(*http_proxy)
+        elif pool:
+            connection.set_tunnel()
+        ensure_available_connection(connection)
+        connection.request(
+            method, 
+            urlunsplit(urlp._replace(scheme="", netloc="")), 
+            body, 
+            headers_, 
+        )
+        response = cast(HTTPResponse, connection.getresponse())
+        if pool and headers_.get("connection") == "keep-alive":
+            setattr(response, "pool", pool)
+        setattr(response, "connection", connection)
+        setattr(response, "method", method)
+        setattr(response, "url", url)
+        setattr(response, "cookies", response_cookies)
+        extract_cookies(response_cookies, url, response)
+        if cookies is not None:
+            extract_cookies(cookies, url, response) # type: ignore
+        status_code = response.status
+        if 300 <= status_code < 400 and follow_redirects:
+            if location := response.headers.get("location"):
+                url = request_args["url"] = urljoin(url, location)
+                if body and status_code in (307, 308):
+                    if isinstance(body, SupportsRead):
+                        try:
+                            body.seek(0) # type: ignore
+                        except Exception:
+                            warn(f"unseekable-stream: {body!r}")
+                    elif not isinstance(body, Buffer):
+                        warn(f"failed to resend request body: {body!r}, when {status_code} redirects")
+                else:
+                    if status_code == 303:
+                        method = "GET"
+                    body = None
+                response.read()
+                continue
+        elif status_code >= 400 and raise_for_status:
+            setattr(response, "content", response.read())
+            raise HTTPError(
+                url, 
+                status_code, 
+                response.reason, 
+                response.headers, 
+                response, 
+            )
+        if parse is None:
+            if method == "HEAD":
+                response.read()
+            return response
+        elif parse is ...:
+            try:
+                if (method == "HEAD" or 
+                    (length := get_length(response)) is not None and length <= 10485760
+                ):
+                    response.read()
+            finally:
+                response.close()
+            return response
+        content = decompress_response(response.read(), response)
+        if isinstance(parse, bool):
+            if not parse:
+                return content
+            parse = cast(Callable, parse_response)
+        return parse(response, content)
+
+# TODO: 实现异步请求，非阻塞模式(sock.setblocking(False))，对于响应体的数据加载，使用 select 模块进行通知

@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "str_translate"
+version = "0.0.1"
+description = "Python string translator."
+authors = ["ChenyangGao <wosiwujm@gmail.com>"]
+license = "MIT"
+readme = "readme.md"
+homepage = "https://github.com/ChenyangGao/python-modules/tree/main/str_translate"
+repository = "https://github.com/ChenyangGao/python-modules/tree/main/str_translate"
+keywords = ["string", "translate"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+packages = [
+    { include = "str_translate" },
+]
+include = [
+    "LICENSE", 
+]
+
+[build-system]
+requires = ["setuptools", "cython", "wheel"]
+build-backend = "setuptools.build_meta"

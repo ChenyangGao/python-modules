@@ -2,11 +2,10 @@
 # encoding: utf-8
 
 __all__ = [
-    "iterable", "async_iterable", "map", "filter", "reduce", "zip", 
-    "chain", "chain_from_iterable", "chunked", "foreach", "async_foreach", 
-    "through", "async_through", "flatten", "async_flatten", "collect", 
-    "async_collect", "group_collect", "async_group_collect", "iter_unique", 
-    "async_iter_unique", "wrap_iter", "wrap_aiter", "peek_iter", "peek_aiter", 
+    "map", "filter", "reduce", "zip", "chain", "chain_from_iterable", 
+    "chunked", "foreach", "through", "flatten", "collect", 
+    "async_group_collect", "iter_unique", "async_iter_unique", 
+    "wrap_iter", "wrap_aiter", "peek_iter", "peek_aiter", 
     "acc_step", "cut_iter", "context", "backgroud_loop", "gen_startup", 
     "async_gen_startup", "do_iter", "do_aiter", "bfs_iter", "bfs_gen", 
 ]
@@ -24,7 +23,7 @@ from contextlib import asynccontextmanager, contextmanager, ExitStack, AsyncExit
 from copy import copy
 from functools import update_wrapper
 from itertools import batched, chain as _chain, pairwise
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from sys import _getframe
 from _thread import start_new_thread
 from time import sleep, time
@@ -35,15 +34,11 @@ from typing import (
 
 from asynctools import (
     async_filter, async_map, async_reduce, async_zip, async_batched, 
-    ensure_async, ensure_aiter, async_chain, collect as async_collect, 
+    ensure_async, ensure_aiter, async_chain, async_chain_from_iterable, 
+    async_collect, async_foreach, async_through, 
 )
 from texttools import format_time
 from undefined import undefined
-
-
-iterable = Iterable.__instancecheck__
-async_iterable = AsyncIterable.__instancecheck__
-isawaitable = Awaitable.__instancecheck__
 
 
 def _coalesce(vals, default=None):
@@ -232,11 +227,8 @@ def chain_from_iterable[T](
     *, 
     async_: Literal[False, True] = False, 
 ) -> Iterator[T] | AsyncIterator[T]:
-    if async_ or not isinstance(iterables, Iterable):
-        if isinstance(iterables, Iterable):
-            return async_chain.from_iterable(iterables, threaded=threaded)
-        else:
-            return async_chain.from_iterable(iterables, threaded=threaded)
+    if async_ or threaded:
+        return async_chain_from_iterable(iterables, threaded=threaded)
     return _chain.from_iterable(iterables) # type: ignore
 
 setattr(chain, "from_iterable", chain_from_iterable)
@@ -291,85 +283,45 @@ def chunked[T](
 
 
 def foreach(
-    value: Callable, 
+    function: Callable, 
     iterable: Iterable | AsyncIterable, 
     /, 
     *iterables: Iterable | AsyncIterable, 
+    default = None, 
     threaded: bool = False, 
 ):
-    """
-    """
-    if (not threaded and 
-        isinstance(iterable, Iterable) and 
-        all(isinstance(it, Iterable) for it in iterables)
+    if (threaded or 
+        isinstance(iterable, AsyncIterable) or 
+        any(isinstance(it, AsyncIterable) for it in iterables)
     ):
-        if iterables:
-            for args in _zip(iterable, *iterables):
-                value(*args)
-        else:
-            for arg in iterable:
-                value(arg)
-    else:
-        return async_foreach(value, iterable, *iterables, threaded=threaded)
-
-
-async def async_foreach(
-    value: Callable, 
-    iterable: Iterable | AsyncIterable, 
-    /, 
-    *iterables: Iterable | AsyncIterable, 
-    threaded: bool = False, 
-):
-    """
-    """
-    value = ensure_async(value, threaded=threaded)
+        return async_foreach(
+            function, 
+            iterable, 
+            *iterables, 
+            default=default, 
+            threaded=threaded, 
+        )
+    r = default
     if iterables:
-        async for args in async_zip(iterable, *iterables, threaded=threaded):
-            await value(*args)
+        for args in _zip(iterable, *iterables):
+            r = function(*args)
     else:
-        async for arg in ensure_aiter(iterable, threaded=threaded):
-            await value(arg)
+        for arg in iterable:
+            r = function(arg)
+    return r
 
 
 def through(
     iterable: Iterable | AsyncIterable, 
     /, 
-    take_while: None | Callable = None, 
     threaded: bool = False, 
 ):
     """
     """
-    if threaded or not isinstance(iterable, Iterable):
-        return async_through(iterable, take_while, threaded=threaded)
-    elif take_while is None:
-        for _ in iterable:
-            pass
-    else:
-        for v in _map(take_while, iterable):
-            if not v:
-                break
-
-
-async def async_through(
-    iterable: Iterable | AsyncIterable, 
-    /, 
-    take_while: None | Callable = None, 
-    threaded: bool = False, 
-):
-    """
-    """
-    iterable = ensure_aiter(iterable, threaded=threaded)
-    if take_while is None:
-        async for _ in iterable:
-            pass
-    elif take_while is bool:
-        async for v in iterable:
-            if not v:
-                break
-    else:
-        async for v in async_map(take_while, iterable):
-            if not v:
-                break
+    if threaded or isinstance(iterable, AsyncIterable):
+        return async_through(iterable, threaded=threaded)
+    for _ in iterable:
+        pass
 
 
 @overload

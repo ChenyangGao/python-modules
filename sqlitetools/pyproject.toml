@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sqlitetools"
-version = "0.1.2"
+version = "0.1.3"
 description = "Python sqlite3 tools."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"

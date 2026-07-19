@@ -26,7 +26,7 @@ from asynctools import ensure_async, run_async
 from errno2 import errno
 from filewrap import (
     buffer_length, bytes_iter_to_reader, bytes_iter_to_async_reader, 
-    AsyncBufferedReader, AsyncTextIOWrapper, 
+    to_bytes_view, AsyncBufferedReader, AsyncTextIOWrapper, 
 )
 from http_request import SupportsGeturl
 from http_response import (
@@ -266,7 +266,7 @@ class HTTPFileReader[Response](RawIOBase, BinaryIO):
 
     def _readinto(self, buffer: Buffer, /) -> int:
         read = self.file.read
-        m = memoryview(buffer).cast("B")
+        m = to_bytes_view(buffer)
         size = len(m)
         start = 0
         last_intv = size - size % COPY_BUFSIZE
@@ -920,7 +920,7 @@ class AsyncHTTPFileReader[Response](RawIOBase, BinaryIO):
 
     async def _readinto(self, buffer: Buffer, /) -> int:
         read = self._get_read()
-        m = memoryview(buffer).cast("B")
+        m = to_bytes_view(buffer)
         size = len(m)
         start = 0
         last_intv = size - size % COPY_BUFSIZE
@@ -1444,7 +1444,7 @@ class MultipartHTTPFileReader[Response](HTTPFileReader[Response]):
             self.reconnect(pos)
         try:
             readinto = self.file.readinto
-            view = memoryview(buffer).cast("B")[:remaining]
+            view = to_bytes_view(buffer)[:remaining]
             size = 0
             while size < remaining:
                 start_pos = pos + size
@@ -1530,7 +1530,7 @@ class MultipartHTTPFileReader[Response](HTTPFileReader[Response]):
         request_kwargs = dict(self.request_kwargs)
         headers = request_kwargs["headers"] = dict(request_kwargs.get("headers") or ())
         headers["accept-encoding"] = "identity"
-        view = memoryview(buffer).cast("B")[:remaining]
+        view = to_bytes_view(buffer)[:remaining]
         size = 0
         while size < remaining:
             for vol in self._parts:
@@ -1790,7 +1790,7 @@ class AsyncMultipartHTTPFileReader[Response](AsyncHTTPFileReader[Response]):
             await self.reconnect(pos)
         try:
             readinto = self.file.readinto
-            view = memoryview(buffer).cast("B")[:remaining]
+            view = to_bytes_view(buffer)[:remaining]
             size = 0
             while size < remaining:
                 start_pos = pos + size
@@ -1876,7 +1876,7 @@ class AsyncMultipartHTTPFileReader[Response](AsyncHTTPFileReader[Response]):
         request_kwargs = dict(self.request_kwargs)
         headers = request_kwargs["headers"] = dict(request_kwargs.get("headers") or ())
         headers["accept-encoding"] = "identity"
-        view = memoryview(buffer).cast("B")[:remaining]
+        view = to_bytes_view(buffer)[:remaining]
         size = 0
         while size < remaining:
             for vol in self._parts:

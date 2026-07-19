@@ -2,16 +2,17 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 3, 0)
+__version__ = (0, 3, 1)
 __all__ = [
     "SupportsRead", "SupportsReadinto", "SupportsWrite", "SupportsSeek", 
     "AsyncBufferedReader", "AsyncTextIOWrapper", "buffer_length", "to_string_buffer", 
-    "to_bytes_buffer", "bio_chunk_iter", "bio_chunk_async_iter", "bio_skip_iter", 
-    "bio_skip_async_iter", "bytes_iter", "bytes_async_iter", "bytes_iter_skip", 
-    "bytes_async_iter_skip", "bytes_iter_to_reader", "bytes_iter_to_async_reader", 
-    "bytes_to_chunk_iter", "bytes_to_chunk_async_iter", "bytes_ensure_part_iter", 
-    "bytes_ensure_part_async_iter", "progress_bytes_iter", "progress_bytes_async_iter", 
-    "copyfileobj", "copyfileobj_async", "bound_bytes_reader", "bound_async_bytes_reader", 
+    "to_bytes_buffer", "to_bytes_view", "bio_chunk_iter", "bio_chunk_async_iter", 
+    "bio_skip_iter", "bio_skip_async_iter", "bytes_iter", "bytes_async_iter", 
+    "bytes_iter_skip", "bytes_async_iter_skip", "bytes_iter_to_reader", 
+    "bytes_iter_to_async_reader", "bytes_to_chunk_iter", "bytes_to_chunk_async_iter", 
+    "bytes_ensure_part_iter", "bytes_ensure_part_async_iter", "progress_bytes_iter", 
+    "progress_bytes_async_iter", "copyfileobj", "copyfileobj_async", "bound_bytes_reader", 
+    "bound_async_bytes_reader", 
 ]
 
 from array import array
@@ -263,7 +264,7 @@ class AsyncBufferedReader(BufferedReader):
             length = buffer_length(data)
             self._pos += buffer_length(prev_data) + length
             if BUFSIZE <= length:
-                buf_view[:] = memoryview(data).cast("B")[-BUFSIZE:]
+                buf_view[:] = to_bytes_view(data)[-BUFSIZE:]
                 self._buf_pos = self._buf_stop = BUFSIZE
             else:
                 buf_pos_stop = buf_stop + length
@@ -308,7 +309,7 @@ class AsyncBufferedReader(BufferedReader):
                 else:
                     return 0
         BUFSIZE = buffer_length(buf_view)
-        buffer_view = memoryview(buffer).cast("B")
+        buffer_view = to_bytes_view(buffer)
         buffer_view[:buf_size] = buf_view[buf_pos:buf_stop]
         buf_pos = self._buf_pos = buf_stop
         self._pos += buf_size
@@ -380,7 +381,7 @@ class AsyncBufferedReader(BufferedReader):
                 else:
                     return 0
         BUFSIZE = buffer_length(buf_view)
-        buffer_view = memoryview(buffer).cast("B")
+        buffer_view = to_bytes_view(buffer)
         buffer_view[:buf_size] = buf_view[buf_pos:buf_stop]
         buf_pos = self._buf_pos = buf_stop
         self._pos += buf_size
@@ -471,7 +472,7 @@ class AsyncBufferedReader(BufferedReader):
         prev_data = buf_view[buf_pos:buf_stop].tobytes()
         self._pos += buffer_length(prev_data) + length
         if BUFSIZE <= length:
-            buf_view[:] = memoryview(data).cast("B")[-BUFSIZE:]
+            buf_view[:] = to_bytes_view(data)[-BUFSIZE:]
             self._buf_pos = self._buf_stop = BUFSIZE
         else:
             buf_pos_stop = buf_stop + length
@@ -657,7 +658,7 @@ class AsyncTextIOWrapper(TextIOWrapper):
                 size -= len(text)
             return n
 
-        cache: bytes | memoryview = memoryview(data).cast("B")
+        cache: bytes | memoryview = to_bytes_view(data)
         while size and buffer_length(data) == size:
             while cache:
                 try:
@@ -839,7 +840,21 @@ def to_string_buffer(s: str, /) -> array:
 def to_bytes_buffer(b: Buffer, /) -> bytes | bytearray | memoryview:
     if isinstance(b, (bytes, bytearray)):
         return b
-    return memoryview(b).cast("B")
+    view = memoryview(b)
+    if view.format == "B":
+        return view
+    if view.c_contiguous:
+        return view.cast("B")
+    return view.tobytes()
+
+
+def to_bytes_view(b: Buffer, /) -> memoryview:
+    view = memoryview(b)
+    if view.format == "B":
+        return view
+    if view.c_contiguous:
+        return view.cast("B")
+    return memoryview(view.tobytes())
 
 
 def bio_chunk_iter(
@@ -1151,7 +1166,7 @@ def bytes_iter(
             else:
                 break
         else:
-            yield memoryview(b).cast("B")[:size]
+            yield to_bytes_view(b)[:size]
             if callback is not None:
                 callback(size)
             break
@@ -1183,7 +1198,7 @@ async def bytes_async_iter(
             else:
                 break
         else:
-            yield memoryview(b).cast("B")[:size]
+            yield to_bytes_view(b)[:size]
             if callback is not None:
                 await callback(size)
             break
@@ -1201,7 +1216,7 @@ def bytes_iter_skip(
     if not callable(callback):
         callback = None
     for b in it:
-        m = memoryview(b).cast("B")
+        m = to_bytes_view(b)
         l = buffer_length(m)
         if callback:
             callback(min(l, size))
@@ -1226,7 +1241,7 @@ async def bytes_async_iter_skip(
         return it
     callback = ensure_async(callback) if callable(callback) else None
     async for b in it:
-        m = memoryview(b).cast("B")
+        m = to_bytes_view(b)
         l = buffer_length(m)
         if callback:
             await callback(min(l, size))
@@ -1302,7 +1317,7 @@ def bytes_iter_to_reader(
                 del unconsumed[:]
             try:
                 while True:
-                    b = memoryview(getnext()).cast("B")
+                    b = to_bytes_view(getnext())
                     if b_len := b.nbytes:
                         m = n + b_len
                         if m >= bufsize:
@@ -1472,7 +1487,7 @@ def bytes_iter_to_async_reader(
                 del unconsumed[:]
             try:
                 while True:
-                    b = memoryview(await getnext()).cast("B")
+                    b = to_bytes_view(await getnext())
                     if b_len := b.nbytes:
                         m = n + b_len
                         if m >= bufsize:
@@ -1579,7 +1594,7 @@ def bytes_to_chunk_iter(
     /, 
     chunksize: int = READ_BUFSIZE, 
 ) -> Iterator[memoryview]:
-    m = memoryview(b).cast("B")
+    m = to_bytes_view(b)
     for i in range(0, buffer_length(m), chunksize):
         yield m[i:i+chunksize]
 
@@ -1589,7 +1604,7 @@ async def bytes_to_chunk_async_iter(
     /, 
     chunksize: int = READ_BUFSIZE, 
 ) -> AsyncIterator[memoryview]:
-    m = memoryview(b).cast("B")
+    m = to_bytes_view(b)
     for i in range(0, buffer_length(m), chunksize):
         yield m[i:i+chunksize]
 
@@ -1601,7 +1616,7 @@ def bytes_ensure_part_iter(
 ) -> Iterator[Buffer]:
     n = partsize
     for b in it:
-        m = memoryview(b).cast("B")
+        m = to_bytes_view(b)
         l = buffer_length(m)
         if l <= n:
             yield b
@@ -1629,7 +1644,7 @@ async def bytes_ensure_part_async_iter(
 ) -> AsyncIterator[Buffer]:
     n = partsize
     async for b in ensure_aiter(it):
-        m = memoryview(b).cast("B")
+        m = to_bytes_view(b)
         l = buffer_length(m)
         if l <= n:
             yield b
@@ -1743,7 +1758,7 @@ def copyfileobj(
     fsrc_readinto = getattr(fsrc, "readinto", None)
     if callable(fsrc_readinto):
         buf = bytearray(chunksize)
-        view = memoryview(buf).cast("B")
+        view = to_bytes_view(buf)
         while size := fsrc_readinto(buf):
             fdst_write(view[:size])
     elif callable(fsrc_read):
@@ -1770,7 +1785,7 @@ async def copyfileobj_async(
     if callable(fsrc_readinto):
         fsrc_readinto = ensure_async(fsrc_readinto, threaded=threaded)
         buf = bytearray(chunksize)
-        view = memoryview(buf).cast("B")
+        view = to_bytes_view(buf)
         while size := await fsrc_readinto(buf):
             await fdst_write(view[:size])
     elif callable(fsrc_read):
@@ -1811,7 +1826,7 @@ def bound_bytes_reader(
             if f_readinto is None:
                 raise NotImplementedError("readinto")
             if size > 0:
-                n = f_readinto(memoryview(buffer).cast("B")[:size])
+                n = f_readinto(to_bytes_view(buffer)[:size])
                 size -= n
                 return n
             return 0
@@ -1846,7 +1861,7 @@ def bound_async_bytes_reader(
             if f_readinto is None:
                 raise NotImplementedError("readinto")
             if size > 0:
-                n = await f_readinto(memoryview(buffer).cast("B")[:size])
+                n = await f_readinto(to_bytes_view(buffer)[:size])
                 size -= n
                 return n
             return 0

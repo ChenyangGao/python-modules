@@ -3,58 +3,25 @@
 
 __all__ = ["dynamic_async", "dynamic_async_iter"]
 
-from asyncio import run as asyncio_run, to_thread
-from collections.abc import (
-    AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, 
-)
+from asyncio import AbstractEventLoop
+from collections.abc import AsyncIterable, Callable, Iterable
 from inspect import isawaitable
 
 from argtools import has_keyword_arg
-from asynctools import ensure_async, in_async
+from asynctools import (
+    ensure_async, in_async, iter_async, run_async, to_coroutine, 
+    to_aiter, 
+)
 from decotools import optional
 
 
-async def _as_async[T](v: T, /) -> T:
-    return v
-
-
-async def _as_async_iter[T](
-    it: Iterable[T], 
-    /, 
-    threaded: bool = False, 
-) -> AsyncIterator[T]:
-    if threaded:
-        call = iter(it).__next__
-        try:
-            while True:
-                yield await to_thread(call)
-        except StopIteration:
-            pass
-    else:
-        for e in it:
-            yield e
-
-
-def _as_iter[T](
-    it: AsyncIterable[T], 
-    /, 
-    run: Callable = asyncio_run, 
-) -> Iterator[T]:
-    try:
-        call = aiter(it).__anext__
-        while True:
-            yield run(call())
-    except StopAsyncIteration:
-        pass
-
-
 @optional
-def dynamic_async[T](
+def dynamic_async(
     func: Callable, 
     /, 
-    run: Callable = asyncio_run, 
     threaded: bool = False, 
     async_: None | bool = None, 
+    loop: None | AbstractEventLoop = None, 
 ):
     has_async_arg = has_keyword_arg(func, "async_")
     def wrapper(*args, async_: None | bool = async_, **kwds):
@@ -68,22 +35,22 @@ def dynamic_async[T](
             else:
                 r = func(*args, **kwds)
                 if not isawaitable(r):
-                    r = _as_async(r)
+                    r = to_coroutine(r)
         else:
             r = func(*args, **kwds)
             if isawaitable(r):
-                r = run(r)
+                r = run_async(r, loop)
         return r
     return wrapper
 
 
 @optional
-def dynamic_async_iter[T](
+def dynamic_async_iter(
     func: Callable[..., Iterable] | Callable[..., AsyncIterable], 
     /, 
-    run: Callable = asyncio_run, 
     threaded: bool = False, 
     async_: None | bool = None, 
+    loop: None | AbstractEventLoop = None, 
 ):
     has_async_arg = has_keyword_arg(func, "async_")
     def wrapper(*args, async_: None | bool = async_, **kwds):
@@ -94,9 +61,9 @@ def dynamic_async_iter[T](
         it = func(*args, **kwds)
         if async_:
             if not isinstance(it, AsyncIterable):
-                it = _as_async_iter(it, threaded=threaded)
+                it = to_aiter(it, threaded=threaded)
         elif isinstance(it, AsyncIterable):
-            it = _as_iter(it, run)
+            it = iter_async(it, loop)
         return it
     return wrapper
 

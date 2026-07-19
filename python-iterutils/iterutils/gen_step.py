@@ -3,7 +3,8 @@
 
 __all__ = [
     "iter_gen_step", "run_gen_step", "run_gen_step_iter", 
-    "as_gen_step", "with_iter_next", "Yield", "YieldFrom", 
+    "as_gen_step", "with_iter_next", "with_lock", "split_cm", 
+    "Yield", "YieldFrom", 
 ]
 
 from asyncio import CancelledError as AsyncCancelledError
@@ -171,7 +172,7 @@ def run_gen_step[T](
     /, 
     async_: Literal[True], 
     running: SupportsBool = True, 
-) -> Awaitable[T]:
+) -> Coroutine[Any, Any, T]:
     ...
 def run_gen_step(
     gen, 
@@ -356,6 +357,38 @@ def with_iter_next[T](
             yield iter(iterable).__next__
         except StopIteration:
             pass
+
+
+@contextmanager
+def with_lock[T](lock, /):
+    """包装锁，以供 `run_gen_step` 和 `run_gen_step_iter` 使用
+
+    .. code:: python
+
+        if async_:
+            async def process():
+                async with lock:
+                    ...
+            return process()
+        else:
+            with lock:
+                ...
+
+    大概相当于
+
+    .. code:: python
+
+        def gen_step():
+            with with_lock(lock) as r:
+                yield r
+                ...
+
+        run_gen_step(gen_step, async_)
+    """
+    try:
+        yield lock.acquire()
+    finally:
+        lock.release()
 
 
 @overload

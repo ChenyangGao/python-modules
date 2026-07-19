@@ -2,22 +2,25 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 2)
+__version__ = (0, 1, 3)
 __all__ = [
     "FetchType", "to_uri", "enclose", "connect", "context_cursor", 
     "execute", "executescript", "query", "find", "upsert_items", 
+    "batch_execute", 
 ]
 
 from collections import ChainMap, UserDict
 from collections.abc import Buffer, Callable, Iterable, Mapping, Sequence
 from contextlib import closing, contextmanager, suppress
 from enum import IntEnum
+from itertools import batched
 from os import fsdecode, PathLike
 from os.path import isabs
 from platform import system
 from re import compile as re_compile
 from sqlite3 import connect as sqlite_connect
-from typing import Any, Final, Literal, Self
+from time import perf_counter
+from typing import cast, Any, Final, Literal, Self
 from urllib.parse import urlencode
 
 from sqlparse import format as sql_format, split as sql_split
@@ -185,7 +188,7 @@ def connect(
 def context_cursor(con, /, isolation_level: None | str = ""):
     """上下文管理器，创建一个 sqlite 数据库事务，会自动进行 commit 和 rollback
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param isolation_level: 隔离级别，如果为 None，则不开启事务
 
     :return: 上下文管理器，返回一个游标
@@ -232,7 +235,7 @@ def execute(
 ):
     """执行一个 sql 语句
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param sql: sql 语句
     :param params: 参数，用于填充 sql 中的占位符
     :param executemany: 如果为 True，调用 executemany 方法，否则调用 execute 方法
@@ -255,7 +258,7 @@ def execute(
 def executescript(con, /, sql: str):
     """执行一个 sql 语句
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param sql: sql 语句
     :param commit: 是否提交事务
 
@@ -294,7 +297,7 @@ def query(
 ):
     """执行一个 sql 查询语句，或者 DML 语句但有 RETURNING 子句（但不会主动 commit）
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param sql: sql 语句
     :param params: 参数，用于填充 sql 中的占位符
     :param row_factory: 对数据进行处理，然后返回处理后的值
@@ -321,7 +324,7 @@ def find(
 ):
     """执行一个 sql 查询语句，或者 DML 语句但有 RETURNING 子句（但不会主动 commit），返回一条数据
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param sql: sql 语句
     :param params: 参数，用于填充 sql 中的占位符
     :param default: 当没有数据返回时，作为默认值返回，如果是异常对象，则进行抛出
@@ -361,7 +364,7 @@ def upsert_items(
         - https://sqlite.org/lang_upsert.html
         - https://sqlite.org/lang_conflict.html
 
-    :param con: 数据库连接或游标
+    :param con: 数据库连接或游标或路径
     :param items: 一组数据
     :param extras: 附加数据（如果和原数据存在 key 冲突，则将其替换）
     :param table: 表名
@@ -396,4 +399,60 @@ ON CONFLICT DO UPDATE SET {",".join(map("{0}=excluded.{0}".format, map(enclose, 
     if where:
         sql += "\nWHERE " + where
     return execute(con, sql, items, executemany=True, commit=commit)
+
+
+def format_time(t: float, /) -> str:
+    m, s = divmod(t, 60)
+    h, m = divmod(int(m), 60)
+    return f"{h:02d}:{m:02d}:{s:09.03f}"
+
+
+def batch_execute(
+    con, 
+    sql: str, 
+    data_it: Iterable, 
+    batch_size: int = 1_000, 
+    init_sql: str = "", 
+    show_progress: None | bool | Callable[[dict], Any] = None, 
+) -> int:
+    """批量执行 sql
+
+    :param con: 数据库连接或游标或路径
+    :param sql: 待执行的（DML） SQL
+    :param data_it: 数据集
+    :param batch_size: 每批次大小
+    :param init_sql: 初始化 SQL
+    :param show_progress: 是否在命令行显示进度条，或者自定义函数（接受一个字典作为参数，格式为 {"elapsed": float, "affected": int}）
+
+    :return: 行变更总次数
+    """
+    if isinstance(con, (bytes, str, PathLike)):
+        with closing(connect(con)) as con:
+            return batch_execute(con, sql, data_it, batch_size)
+    if init_sql:
+        executescript(con, init_sql)
+    if isinstance(show_progress, bool):
+        if show_progress:
+            def gen_progress():
+                try:
+                    while True:
+                        data = yield
+                        print(f"\r\x1b[K⏱️ {format_time(data["elapsed"])} 🧮 {data["affected"]}", end="", flush=True)
+                finally:
+                    print(f"\r\x1b[K", end="", flush=True)
+            gen = gen_progress()
+            next(gen)
+            show_progress = cast(Callable, gen.send)
+        else:
+            show_progress = None
+    total = 0
+    start_t = perf_counter()
+    if show_progress is not None:
+        show_progress({"elapsed": perf_counter()-start_t, "affected": 0})
+    for batch in batched(data_it, batch_size):
+        cur = execute(con, sql, batch, executemany=True, commit=True)
+        total += cur.rowcount
+        if show_progress is not None:
+            show_progress({"elapsed": perf_counter()-start_t, "affected": cur.rowcount})
+    return total
 

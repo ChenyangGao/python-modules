@@ -2,11 +2,12 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__all__ = ["Ed2kHash", "ed2k_hash", "ed2k_hash_async"]
+__all__ = ["Ed2kHash", "ed2k_hash", "ed2k_hash_async", "make_ed2k_uri"]
 __version__ = (0, 0, 2)
 
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sized
 from typing import Final
+from urllib.parse import quote
 
 from filewrap import (
     Buffer, SupportsRead, 
@@ -104,4 +105,12 @@ async def ed2k_hash_async(file: Buffer | SupportsRead[Buffer] | SupportsRead[Awa
     if not filesize % MD4_BLOCK_SIZE:
         block_hashes += MD4_EMPTY_HASH
     return filesize, MD4Hash(block_hashes).hexdigest()
+
+
+def make_ed2k_uri(
+    name: str, 
+    size: int | str, 
+    hash: str, 
+) -> str:
+    return f"ed2k://|file|{quote(name, safe='')}|{size}|{hash}|/"
 

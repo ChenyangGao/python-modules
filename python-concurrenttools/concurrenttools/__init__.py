@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 1, 6)
+__version__ = (0, 1, 8)
 
 from .basic import *
 from .iter_offset import *

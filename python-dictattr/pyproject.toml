@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dictattr"
-version = "0.0.4"
+version = "0.0.5"
 description = "Python dictattr."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -25,7 +25,7 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 
 [build-system]
 requires = ["poetry-core"]

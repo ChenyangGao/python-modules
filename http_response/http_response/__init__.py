@@ -15,12 +15,16 @@ from collections.abc import Container, Iterable, Mapping
 from mimetypes import guess_extension, guess_type
 from posixpath import basename
 from re import compile as re_compile, IGNORECASE
-from typing import cast, Final
+from typing import cast, Callable, Final
 from urllib.parse import parse_qsl, urlsplit, unquote
 from http.client import HTTPMessage
 
 from dicttools import get
-from orjson import loads
+loads: Callable
+try:
+    from orjson import loads
+except ImportError:
+    from json import loads
 
 
 CRE_CONTENT_RANGE_fullmatch: Final = re_compile(r"bytes\s+(?:\*|(?P<begin>[0-9]+)-(?P<end>[0-9]+))/(?:(?P<size>[0-9]+)|\*)").fullmatch

@@ -145,7 +145,12 @@ def main(argv: None | list[str] | Namespace = None, /):
         output_type = "log"
     write = file.buffer.write
     if output_type in ("log", "json"):
-        from orjson import dumps
+        dumps: Callable[..., bytes]
+        try:
+            from orjson import dumps
+        except ImportError:
+            from json import dumps as _dumps
+            dumps = lambda o, /: _dumps(o, ensure_ascii=False).encode("utf-8")
 
     fmap: dict[str, Callable] = {
         "inode": DirEntry.inode, 

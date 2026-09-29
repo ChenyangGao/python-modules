@@ -37,7 +37,12 @@ from dicttools import dict_map, iter_items
 from ensure import ensure_bytes as ensure_bytes_, ensure_buffer, ensure_str
 from filewrap import bio_chunk_iter, bio_chunk_async_iter, SupportsRead
 from http_response import get_charset, get_mimetype
-from orjson import dumps as json_dumps
+json_dumps: Callable[..., bytes]
+try:
+    from orjson import dumps as json_dumps
+except ImportError:
+    from json import dumps as _dumps
+    json_dumps = lambda o, /: _dumps(o, ensure_ascii=False).encode("utf-8")
 from texttools import text_to_dict
 from yarl import URL
 
@@ -72,7 +77,8 @@ def url_origin(
     elif url.startswith("://"):
         url = "http" + url
     urlp = urlparse(url)
-    scheme, netloc = urlp.scheme or "http", urlp.netloc or "localhost"
+    scheme = urlp.scheme or "http"
+    netloc = urlp.netloc or "localhost"
     if default_port and not urlp.port:
         netloc = netloc.removesuffix(":") + f":{default_port}"
     return f"{scheme}://{netloc}"

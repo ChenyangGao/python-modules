@@ -8,8 +8,8 @@ __all__ = [
 ]
 
 from asyncio import (
-    sleep as async_sleep, CancelledError as AsyncCancelledError, 
-    Lock as AsyncLock, Queue as AsyncQueue, Task, TaskGroup, 
+    create_task, sleep as async_sleep, CancelledError as AsyncCancelledError, 
+    Lock as AsyncLock, Queue as AsyncQueue, Task, 
 )
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -67,7 +67,7 @@ def iter_page_threaded[T](
     """
     assert page_size > 0
     if max_workers is None or max_workers < 0:
-        max_workers = min(32, (cpu_count() or 1) + 4)
+        max_workers = min(20, (cpu_count() or 1) + 4)
     if retry_for_exception is None:
         retry_for_exception = lambda _, /: False
     elif isinstance(retry_for_exception, type) and issubclass(retry_for_exception, BaseException) or isinstance(retry_for_exception, tuple):
@@ -100,8 +100,9 @@ def iter_page_threaded[T](
                 yield resp
                 if max_page <= 0 and get_max_page:
                     max_page = get_max_page(resp)
-                if not check_for_stop(page, page_size, resp):
-                    page = payload[key_page] = payload[key_page] + 1
+                if check_for_stop(page, page_size, resp):
+                    break
+                page = payload[key_page] = payload[key_page] + 1
     else:
         if callable(max_page):
             if argcount(max_page):
@@ -247,7 +248,7 @@ async def iter_page_async[T](
     """
     assert page_size > 0
     if max_workers is None or max_workers < 0:
-        max_workers = 32
+        max_workers = 20
     if retry_for_exception is None:
         retry_for_exception = lambda _, /: False
     elif isinstance(retry_for_exception, type) and issubclass(retry_for_exception, BaseException) or isinstance(retry_for_exception, tuple):
@@ -284,8 +285,9 @@ async def iter_page_async[T](
                 yield resp
                 if max_page <= 0 and get_max_page:
                     max_page = get_max_page(resp)
-                if not check_for_stop(page, page_size, resp):
-                    page = payload[key_page] = payload[key_page] + 1
+                if check_for_stop(page, page_size, resp):
+                    break
+                page = payload[key_page] = payload[key_page] + 1
     else:
         if callable(max_page):
             if argcount(max_page):
@@ -373,32 +375,26 @@ async def iter_page_async[T](
                 countdown(task_id)
                 if not task_ids:
                     await put(None)
-        exc: None | BaseException = None
         try:
             if max_page > 0:
                 max_workers = min(max_page, max_workers)
-            async with TaskGroup() as tg:
-                create_task = tg.create_task
-                lock = AsyncLock()
-                q: AsyncQueue = AsyncQueue(max_workers)
-                get, put = q.get, q.put
-                task_ids.update(range(max_workers))
-                task_list.extend(repeat(None, max_workers))
-                task_page.extend(repeat(0, max_workers))
-                for i in range(max_workers):
-                    task_list[i] = create_task(request(i))
-                while True:
-                    resp = await get()
-                    if resp is None:
-                        break
-                    status, result = resp
-                    if status:
-                        yield result
-                    elif not isinstance(result, AsyncCancelledError):
-                        exc = result
-                        break
-            if exc is not None:
-                raise exc
+            lock = AsyncLock()
+            q: AsyncQueue = AsyncQueue(max_workers)
+            get, put = q.get, q.put
+            task_ids.update(range(max_workers))
+            task_list.extend(repeat(None, max_workers))
+            task_page.extend(repeat(0, max_workers))
+            for i in range(max_workers):
+                task_list[i] = create_task(request(i))
+            while True:
+                resp = await get()
+                if resp is None:
+                    break
+                status, result = resp
+                if status:
+                    yield result
+                elif not isinstance(result, AsyncCancelledError):
+                    raise result
         finally:
             running = False
 
@@ -512,7 +508,7 @@ def iter_page_multi_threaded[T](
     """
     assert page_size > 0
     if max_workers is None or max_workers < 0:
-        max_workers = min(32, (cpu_count() or 1) + 4)
+        max_workers = min(20, (cpu_count() or 1) + 4)
     if retry_for_exception is None:
         retry_for_exception = lambda _, /: False
     elif isinstance(retry_for_exception, type) and issubclass(retry_for_exception, BaseException) or isinstance(retry_for_exception, tuple):
@@ -681,7 +677,7 @@ async def iter_page_multi_async[T](
     """
     assert page_size > 0
     if max_workers is None or max_workers < 0:
-        max_workers = 32
+        max_workers = 20
     if retry_for_exception is None:
         retry_for_exception = lambda _, /: False
     elif isinstance(retry_for_exception, type) and issubclass(retry_for_exception, BaseException) or isinstance(retry_for_exception, tuple):
@@ -781,7 +777,7 @@ async def iter_page_multi_async[T](
                         if check_for_stop(page, page_size, resp):
                             set_max_page(payload, page)
                         await put((True, resp))
-            except (StopIteration, CancelledError):
+            except (StopIteration, AsyncCancelledError):
                 pass
             except BaseException as e:
                 running = False
@@ -794,30 +790,24 @@ async def iter_page_multi_async[T](
                 countdown(task_id)
                 if not task_ids:
                     await put(None)
-        exc: None | BaseException = None
         try:
-            async with TaskGroup() as tg:
-                create_task = tg.create_task
-                lock = AsyncLock()
-                q: AsyncQueue = AsyncQueue(max_workers)
-                get, put = q.get, q.put
-                task_ids.update(range(max_workers))
-                task_list.extend(repeat(None, max_workers))
-                task_page.extend([({}, 0)] * max_workers)
-                for i in range(max_workers):
-                    task_list[i] = create_task(request(i))
-                while True:
-                    resp = await get()
-                    if resp is None:
-                        break
-                    status, result = resp
-                    if status:
-                        yield result
-                    elif not isinstance(result, CancelledError):
-                        exc = result
-                        break
-            if exc is not None:
-                raise exc
+            lock = AsyncLock()
+            q: AsyncQueue = AsyncQueue(max_workers)
+            get, put = q.get, q.put
+            task_ids.update(range(max_workers))
+            task_list.extend(repeat(None, max_workers))
+            task_page.extend([({}, 0)] * max_workers)
+            for i in range(max_workers):
+                task_list[i] = create_task(request(i))
+            while True:
+                resp = await get()
+                if resp is None:
+                    break
+                status, result = resp
+                if status:
+                    yield result
+                elif not isinstance(result, AsyncCancelledError):
+                    raise result
         finally:
             running = False
 

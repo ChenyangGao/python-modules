@@ -8,8 +8,8 @@ __all__ = [
 ]
 
 from asyncio import (
-    shield, sleep as async_sleep, wait_for, TimeoutError as AsyncTimeoutError, 
-    Semaphore as AsyncSemaphore, Task, TaskGroup, 
+    create_task, shield, sleep as async_sleep, wait_for, TimeoutError as AsyncTimeoutError, 
+    Semaphore as AsyncSemaphore, Task, 
 )
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -201,57 +201,51 @@ async def iter_offset_async[T](
             async def call(payload: dict, /, call=call) -> T:
                 async with sema:
                     return await call(payload)
-        async with TaskGroup() as tg:
-            create_task = tg.create_task
-            def make_task(payload: dict, /) -> Task:
-                nonlocal last_call_ts
-                last_call_ts = time()
-                return create_task(ensure_coroutine(call(payload)))
-            dq: deque[tuple[Task, int]] = deque()
-            push, pop = dq.append, dq.popleft
-            push((make_task(payload), offset))
-            max_offset: None | int = None
-            exc: None | BaseException = None
-            while dq:
-                task, offset = pop()
-                try:
-                    if cur_page_size == page_size:
-                        resp = await wait_for(shield(task), max(0, last_call_ts + cooldown - time()))
-                    else:
-                        resp = await task
-                except BaseException as e:
-                    if task.done():
-                        if task.exception() is not e:
-                            if not isinstance(e, AsyncTimeoutError):
-                                raise
-                            push((task, offset))
-                            continue
-                        if not retry_for_exception(e):
-                            exc = e
-                            break
-                        push((make_task({**payload, key_offset: offset}), offset))
-                    elif isinstance(e, AsyncTimeoutError):
-                        push((task, offset))
-                    else:
-                        raise
+        def make_task(payload: dict, /) -> Task:
+            nonlocal last_call_ts
+            last_call_ts = time()
+            return create_task(ensure_coroutine(call(payload)))
+        dq: deque[tuple[Task, int]] = deque()
+        push, pop = dq.append, dq.popleft
+        push((make_task(payload), offset))
+        max_offset: None | int = None
+        while dq:
+            task, offset = pop()
+            try:
+                if cur_page_size == page_size:
+                    resp = await wait_for(shield(task), max(0, last_call_ts + cooldown - time()))
                 else:
-                    yield resp
-                    if check_for_stop(offset, cur_page_size, resp):
-                        max_offset = offset
-                        for _ in range(len(dq)):
-                            task, offset = pop()
-                            if offset > max_offset:
-                                task.cancel()
-                            else:
-                                push((task, offset))
-                    if cur_page_size != page_size:
-                        cur_page_size = page_size
-                        payload[key_limit] = page_size
-                if max_offset is None:
-                    payload[key_offset] += page_size
-                    push((make_task(payload), payload[key_offset]))
-        if exc is not None:
-            raise exc
+                    resp = await task
+            except BaseException as e:
+                if task.done():
+                    if task.exception() is not e:
+                        if not isinstance(e, AsyncTimeoutError):
+                            raise
+                        push((task, offset))
+                        continue
+                    if not retry_for_exception(e):
+                        raise e
+                    push((make_task({**payload, key_offset: offset}), offset))
+                elif isinstance(e, AsyncTimeoutError):
+                    push((task, offset))
+                else:
+                    raise
+            else:
+                yield resp
+                if check_for_stop(offset, cur_page_size, resp):
+                    max_offset = offset
+                    for _ in range(len(dq)):
+                        task, offset = pop()
+                        if offset > max_offset:
+                            task.cancel()
+                        else:
+                            push((task, offset))
+                if cur_page_size != page_size:
+                    cur_page_size = page_size
+                    payload[key_limit] = page_size
+            if max_offset is None:
+                payload[key_offset] += page_size
+                push((make_task(payload), payload[key_offset]))
 
 
 @overload
@@ -525,55 +519,49 @@ async def iter_offset_multi_async[T](
             async def call(payload: dict, /, call=call) -> T:
                 async with sema:
                     return await call(payload)
-        async with TaskGroup() as tg:
-            create_task = tg.create_task
-            def make_task(payload: dict, /) -> Task:
-                nonlocal last_call_ts
-                last_call_ts = time()
-                return create_task(ensure_coroutine(call(payload)))
-            dq_tasks: deque[tuple[Task, int, dict]] = deque()
-            get_task, put_task = dq_tasks.popleft, dq_tasks.append
-            while dq_payload:
-                payload = get_payload()
-                put_task((make_task(payload), payload[key_offset], payload))
-            d_max_page: dict[int, int] = {}
-            exc: None | BaseException = None
-            while dq_tasks:
-                task, offset, payload = get_task()
-                try:
-                    resp = await wait_for(shield(task), max(0, last_call_ts + cooldown - time()))
-                except BaseException as e:
-                    if task.done():
-                        if task.exception() is not e:
-                            if not isinstance(e, AsyncTimeoutError):
-                                raise
-                            put_task((task, offset, payload))
-                            continue
-                        if not retry_for_exception(e):
-                            exc = e
-                            break
-                        put_task((make_task({**payload, key_offset: offset}), offset, payload))
-                    elif isinstance(e, AsyncTimeoutError):
+        def make_task(payload: dict, /) -> Task:
+            nonlocal last_call_ts
+            last_call_ts = time()
+            return create_task(ensure_coroutine(call(payload)))
+        dq_tasks: deque[tuple[Task, int, dict]] = deque()
+        get_task, put_task = dq_tasks.popleft, dq_tasks.append
+        while dq_payload:
+            payload = get_payload()
+            put_task((make_task(payload), payload[key_offset], payload))
+        d_max_page: dict[int, int] = {}
+        while dq_tasks:
+            task, offset, payload = get_task()
+            try:
+                resp = await wait_for(shield(task), max(0, last_call_ts + cooldown - time()))
+            except BaseException as e:
+                if task.done():
+                    if task.exception() is not e:
+                        if not isinstance(e, AsyncTimeoutError):
+                            raise
                         put_task((task, offset, payload))
-                    else:
-                        raise
+                        continue
+                    if not retry_for_exception(e):
+                        raise e
+                    put_task((make_task({**payload, key_offset: offset}), offset, payload))
+                elif isinstance(e, AsyncTimeoutError):
+                    put_task((task, offset, payload))
                 else:
-                    yield resp
-                    if check_for_stop(offset, page_size, resp):
-                        max_page = d_max_page.get(id(payload))
-                        if max_page is None or max_page > offset:
-                            max_page = d_max_page[id(payload)] = offset
-                            for _ in range(len(dq_tasks)):
-                                task, offset, payload_ = get_task()
-                                if payload is payload_ and offset > max_page:
-                                    task.cancel()
-                                else:
-                                    put_task((task, offset, payload_))
-                with suppress(StopIteration):
-                    payload = next_payload()
-                    put_task((make_task(payload), payload[key_offset], payload))
-        if exc is not None:
-            raise exc
+                    raise
+            else:
+                yield resp
+                if check_for_stop(offset, page_size, resp):
+                    max_page = d_max_page.get(id(payload))
+                    if max_page is None or max_page > offset:
+                        max_page = d_max_page[id(payload)] = offset
+                        for _ in range(len(dq_tasks)):
+                            task, offset, payload_ = get_task()
+                            if payload is payload_ and offset > max_page:
+                                task.cancel()
+                            else:
+                                put_task((task, offset, payload_))
+            with suppress(StopIteration):
+                payload = next_payload()
+                put_task((make_task(payload), payload[key_offset], payload))
 
 
 @overload

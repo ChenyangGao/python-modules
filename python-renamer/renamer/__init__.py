@@ -12,12 +12,13 @@ from os import rename, fsdecode, PathLike
 from os.path import abspath, join as joinpath, relpath
 from pathlib import Path
 from sys import stderr, stdout
-from typing import cast, BinaryIO, IO, Optional, TypedDict
+from typing import cast, BinaryIO, Callable, IO, Optional, TypedDict
 
 from filerev import file_reviter
 from iterdir import iterdir
 from json_write import json_log_gen_write
 
+loads: Callable
 try:
     from orjson import loads
 except ImportError:
@@ -53,7 +54,6 @@ def batch_rename(
         top = Path().absolute()
     else:
         top = Path(fsdecode(top)).absolute()
-    toppath = str(top)
     gen = json_log_gen_write(file=outfile)
     output = gen.send
     total = success = failed = skipped = 0
@@ -135,3 +135,4 @@ def rename_with_pairs(
             print(f"{type(exc).__qualname__}: {exc}", file=stderr)
     return {"total": total, "success": success, "failed": failed, "skipped": skipped}
 
+# TODO: 还未完成，需要优化

@@ -23,12 +23,12 @@ dumps: Callable[..., bytes]
 try:
     from orjson import dumps
 except ImportError:
-    odumps: Callable[..., str]
+    _dumps: Callable[..., str]
     try:
-        from ujson import dumps as odumps
+        from ujson import dumps as _dumps
     except ImportError:
-        from json import dumps as odumps
-    dumps = lambda obj: bytes(odumps(obj, ensure_ascii=False), "utf-8")
+        from json import dumps as _dumps
+    dumps = lambda obj: _dumps(obj, ensure_ascii=False).encode("utf-8")
 
 
 PathType: TypeAlias = bytes | str | PathLike
@@ -66,7 +66,7 @@ def foreach(fn, it, /, *its):
 @gen_startup
 def json_log_gen_write(
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     if isinstance(file, TextIOWrapper):
         file = file.buffer
@@ -83,7 +83,7 @@ def json_log_write(
     it: Iterable, 
     /, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     with gen_as_ctx(json_log_gen_write(value=value, file=file)) as write:
         foreach(write, it)
@@ -92,7 +92,7 @@ def json_log_write(
 @gen_startup
 def json_array_gen_write(
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     if isinstance(file, TextIOWrapper):
         file = file.buffer
@@ -117,7 +117,7 @@ def json_array_write(
     it: Iterable, 
     /, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     with gen_as_ctx(json_array_gen_write(value=value, file=file)) as write:
         foreach(write, it)
@@ -127,7 +127,7 @@ def json_array_write(
 def json_object_gen_write(
     key: Callable, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     if isinstance(file, TextIOWrapper):
         file = file.buffer
@@ -154,7 +154,7 @@ def json_object_write(
     /, 
     key: Optional[Callable] = None, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     if key is None:
         if isinstance(it, Mapping):
@@ -176,7 +176,7 @@ def json_groups_gen_write(
     keys: Sequence[Callable], 
     *, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     assert keys, "empty keys"
     if isinstance(file, TextIOWrapper):
@@ -216,7 +216,7 @@ def json_groups_write(
     /, 
     keys: Sequence[Callable], 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     with gen_as_ctx(json_groups_gen_write(keys, value=value, file=file)) as write:
         foreach(write, it)
@@ -225,7 +225,7 @@ def json_groups_write(
 def json_gen_write(
     keys: None | Callable | Sequence[Callable] = None, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     if keys is None:
         return json_log_gen_write(value=value, file=file)
@@ -244,7 +244,7 @@ def json_write(
     /, 
     keys: None | Callable | Sequence[Callable] = None, 
     value: Optional[Callable] = None, 
-    file: SupportsWriteBytes | TextIOWrapper = stdout, 
+    file: SupportsWriteBytes | TextIOWrapper = stdout, # type: ignore
 ):
     with gen_as_ctx(json_gen_write(keys=keys, value=value, file=file)) as write:
         foreach(write, it)

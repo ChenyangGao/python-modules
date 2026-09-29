@@ -77,7 +77,7 @@ def call_close(response, /):
         elif hasattr(response, "release"):
             return response.release()
         elif hasattr(response, "__exit__"):
-            return response.__exit__(**exc_info())
+            return response.__exit__(*exc_info())
         elif hasattr(response, "__del__"):
             return response.__del__()
     except Exception:
@@ -134,9 +134,9 @@ async def call_async_close(response, /):
                 ret = await ret
             return ret
         elif hasattr(response, "__aexit__"):
-            return await response.__aexit__(**exc_info())
+            return await response.__aexit__(*exc_info())
         elif hasattr(response, "__exit__"):
-            return response.__exit__(**exc_info())
+            return response.__exit__(*exc_info())
         elif hasattr(response, "__del__"):
             return response.__del__()
     except Exception:

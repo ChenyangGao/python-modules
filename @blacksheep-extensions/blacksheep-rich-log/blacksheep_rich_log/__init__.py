@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 __author__ = "ChenyangGao <https://chenyanggao.github.io>"
-__version__ = (0, 0, 2)
+__version__ = (0, 0, 3)
 __all__ = ["middleware_access_log"]
 __license__ = "GPLv3 <https://www.gnu.org/licenses/gpl-3.0.txt>"
 
@@ -14,11 +14,20 @@ from io import UnsupportedOperation
 from textwrap import indent
 from time import time
 from traceback import format_exc
+from typing import cast, Callable
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from blacksheep import text, Application, Request, Response
 from blacksheep.exceptions import HTTPException
-from orjson import dumps, OPT_INDENT_2, OPT_SORT_KEYS
+dumps: Callable
+json_dumps: Callable[..., str]
+try:
+    from orjson import dumps, OPT_INDENT_2, OPT_SORT_KEYS
+    json_dumps = lambda o, default=None: dumps(o, default=default, option=OPT_INDENT_2 | OPT_SORT_KEYS).decode("utf-8")
+except ImportError:
+    from json import dumps
+    json_dumps = lambda o, default=None: dumps(o, default=default, ensure_ascii=False, indent=2, sort_keys=True)
+
 from rich.box import ROUNDED
 from rich.console import Console
 from rich.highlighter import JSONHighlighter
@@ -55,7 +64,7 @@ def highlight_json(val, /, default=repr, highlighter=JSONHighlighter()) -> Text:
     if isinstance(val, Buffer):
         val = str(val, "utf-8")
     if not isinstance(val, str):
-        val = dumps(val, default=default, option=OPT_INDENT_2 | OPT_SORT_KEYS).decode("utf-8")
+        val = json_dumps(val, default=default)
     return highlighter(val)
 
 
@@ -115,7 +124,7 @@ def middleware_access_log(
                 if exc_module not in ("__builtins__", "__main__"):
                     exc_name = exc_module + "." + exc_name
                 error_msg = f"\n    |_ \x1b[1;31m{exc_name}\x1b[0m: {e}"
-        host, port = request.scope["client"]
+        host, port = cast(tuple[str, int], request.scope["client"])
         status = response.status
         if not status:
             status = 200

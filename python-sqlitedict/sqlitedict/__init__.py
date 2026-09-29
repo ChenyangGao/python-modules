@@ -7,9 +7,16 @@ __all__ = ["SqliteDict", "SqliteTableDict"]
 
 from collections.abc import Callable, Iterator, MutableMapping
 from sqlite3 import connect, register_adapter, register_converter, Connection, Cursor
+from typing import Callable
 
-from orjson import dumps, loads
-from sqlitetools import enclose, execute, find, query, AutoCloseConnection, AutoCloseCursor
+dumps: Callable[..., bytes]
+loads: Callable
+try:
+    from orjson import dumps, loads
+except ImportError:
+    from json import dumps as _dumps, loads
+    dumps = lambda o, /: _dumps(o, ensure_ascii=False).encode("utf-8")
+from sqlitetools import enclose, execute, find, query
 from undefined import undefined
 
 
@@ -68,7 +75,7 @@ CREATE TABLE IF NOT EXISTS dict(
                 lock_ = None
             else:
                 lock_ = lock
-            cur = con.cursor(AutoCloseCursor)
+            cur = con.cursor()
             if params:
                 if len(params) == 1:
                     if key_dumps:
@@ -165,7 +172,7 @@ class SqliteTableDict(MutableMapping):
         where: str = "", 
     ):
         if not isinstance(con, (Connection, Cursor)):
-            con = connect(con, factory=AutoCloseConnection)
+            con = connect(con)
         self.con = con
         table = enclose(table)
         key_is_tuple = self._key_is_tuple = isinstance(key, tuple)

@@ -451,8 +451,9 @@ def batch_execute(
         show_progress({"elapsed": perf_counter()-start_t, "affected": 0})
     for batch in batched(data_it, batch_size):
         cur = execute(con, sql, batch, executemany=True, commit=True)
-        total += cur.rowcount
+        if (affected := cur.rowcount) > 0:
+            total += affected
         if show_progress is not None:
-            show_progress({"elapsed": perf_counter()-start_t, "affected": cur.rowcount})
+            show_progress({"elapsed": perf_counter()-start_t, "affected": total})
     return total
 

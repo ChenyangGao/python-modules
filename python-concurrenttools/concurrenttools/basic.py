@@ -4,13 +4,13 @@
 __all__ = [
     "killable_executor", "thread_batch", "thread_pool_batch", 
     "async_batch", "threaded", "run_as_thread", "asynchronized", 
-    "run_as_async", "threadpool_map", "taskgroup_map", "conmap", 
+    "run_as_async", "thread_conmap", "async_conmap", "conmap", 
     "conmap_wrap", 
 ]
 
 from asyncio import (
-    ensure_future, get_event_loop, BaseEventLoop, CancelledError as AsyncCancelledError, 
-    Future as AsyncFuture, Queue as AsyncQueue, Semaphore as AsyncSemaphore, TaskGroup, 
+    create_task, ensure_future, get_event_loop, BaseEventLoop, CancelledError as AsyncCancelledError, 
+    Future as AsyncFuture, Queue as AsyncQueue, Semaphore as AsyncSemaphore, 
 )
 from collections.abc import (
     AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable, 
@@ -27,14 +27,12 @@ from threading import Event, Lock, Semaphore, Thread
 from typing import cast, overload, Any, ContextManager, Literal
 
 from argtools import argcount, has_keyword_arg
-from asynctools import async_map, async_zip, ensure_coroutine, run_async
+from asynctools import async_map, async_zip, ensure_coroutine
 from decotools import optional
 
 
 if "__del__" not in ThreadPoolExecutor.__dict__:
     setattr(ThreadPoolExecutor, "__del__", lambda self, /: self.shutdown(wait=False, cancel_futures=True))
-if "__del__" not in TaskGroup.__dict__:
-    setattr(TaskGroup, "__del__", lambda self, /: run_async(self.__aexit__(None, None, None)))
 
 
 @contextmanager
@@ -57,8 +55,7 @@ def thread_batch[T, V](
         raise TypeError(f"{work!r} should accept a positional argument as task")
     with_submit = ac > 1
     if max_workers is None or max_workers <= 0:
-        max_workers = min(32, (cpu_count() or 1) + 4)
-
+        max_workers = min(20, (cpu_count() or 1) + 4)
     q: Queue[T | object] = Queue()
     get, put, task_done = q.get, q.put, q.task_done
     sentinal = object()
@@ -161,7 +158,7 @@ async def async_batch[T, V](
     max_workers: None | int | AsyncSemaphore = None, 
 ):
     if max_workers is None:
-        max_workers = 32
+        max_workers = 20
     if isinstance(max_workers, int):
         if max_workers > 0:
             sema = AsyncSemaphore()
@@ -190,15 +187,13 @@ async def async_batch[T, V](
             raise
         except BaseException as e:
             raise AsyncCancelledError from e
-    async with TaskGroup() as tg:
-        create_task = tg.create_task
-        submit = lambda task, /: create_task(works(task))
-        if isinstance(tasks, Iterable):
-            for task in tasks:
-                submit(task)
-        else:
-            async for task in tasks:
-                submit(task)
+    submit = lambda task, /: create_task(works(task))
+    if isinstance(tasks, Iterable):
+        for task in tasks:
+            submit(task)
+    else:
+        async for task in tasks:
+            submit(task)
 
 
 @optional
@@ -276,7 +271,7 @@ def run_as_async[**Args, T](
     return getattr(asynchronized, "__wrapped__")(func)(*args, **kwargs)
 
 
-def threadpool_map[T](
+def thread_conmap[T](
     func: Callable[..., T], 
     it, 
     /, 
@@ -318,7 +313,7 @@ def threadpool_map[T](
             executor.shutdown(wait=False, cancel_futures=True)
 
 
-async def taskgroup_map[T](
+async def async_conmap[T](
     func: Callable[..., T] | Callable[..., Awaitable[T]], 
     it, 
     /, 
@@ -329,8 +324,8 @@ async def taskgroup_map[T](
         async for ret in async_map(func, it, *its):
             yield cast(T, ret)
     else:
-        if max_workers and max_workers < 0:
-            max_workers = 32
+        if not max_workers or max_workers < 0:
+            max_workers = 20
         sema = AsyncSemaphore(max_workers)
         queue: AsyncQueue = AsyncQueue()
         get, put = queue.get, queue.put_nowait
@@ -348,20 +343,11 @@ async def taskgroup_map[T](
                 put(e)
             finally:
                 put(None)
-        exc = None
-        async with TaskGroup() as tg:
-            create_task = tg.create_task
-            create_task(make_tasks())
-            try:
-                while task := await get():
-                    if isinstance(task, BaseException):
-                        exc = task
-                        break
-                    yield await task
-            except BaseException as e:
-                exc = e
-        if exc is not None:
-            raise exc
+        create_task(make_tasks())
+        while task := await get():
+            if isinstance(task, BaseException):
+                raise task
+            yield await task
 
 
 @overload
@@ -394,7 +380,7 @@ def conmap[T](
 ) -> Iterator[T] | AsyncIterator[T]:
     if has_keyword_arg(func, "async_"):
         func = partial(func, async_=async_) # type: ignore
-    map: Callable = taskgroup_map if async_ else threadpool_map
+    map: Callable = async_conmap if async_ else thread_conmap
     return map(
         func, 
         it, 

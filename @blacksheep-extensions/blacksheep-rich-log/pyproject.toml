@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "blacksheep-rich-log"
-version = "0.0.2"
+version = "0.0.3"
 description = "BlackSheep access log middleware."
 authors = ["ChenyangGao <wosiwujm@gmail.com>"]
 license = "MIT"
@@ -28,7 +28,6 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.12"
 blacksheep = "*"
-orjson = "*"
 rich = "*"
 
 [build-system]
